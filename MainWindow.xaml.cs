@@ -22,6 +22,7 @@ public partial class MainWindow : Window
 {
     private readonly VideoAnalyzer _videoAnalyzer = new();
     private readonly FrameExtractor _frameExtractor = new();
+    private readonly ImageSequenceComposer _imageSequenceComposer = new();
     private readonly FaceBlurService _faceBlurService = new();
     private readonly ObservableCollection<BitmapImage> _previewImages = [];
 
@@ -29,14 +30,34 @@ public partial class MainWindow : Window
     private VideoInfo? _currentVideoInfo;
     private readonly List<string> _pendingFiles = [];
     private bool _isExtracting;
+    private bool _isComposing;
     private string? _lastOutputFolder;
 
     public MainWindow()
     {
         InitializeComponent();
         PreviewItemsControl.ItemsSource = _previewImages;
+        ComposeOutputPathTextBox.Text = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "output.mp4");
+        UpdateTabSpecificUi();
         LoadSettings();
         UpdateEstimatedOutput();
+    }
+
+    private void MainTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsLoaded)
+            return;
+
+        if (e.Source is TabControl)
+        {
+            UpdateTabSpecificUi();
+        }
+    }
+
+    private void UpdateTabSpecificUi()
+    {
+        bool isComposeTab = MainTabControl.SelectedIndex == 1;
+        ExtractBottomBar.Visibility = isComposeTab ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void LoadSettings()
@@ -197,7 +218,7 @@ public partial class MainWindow : Window
 
     private async Task StartExtractionAsync()
     {
-        if (_isExtracting)
+        if (_isExtracting || _isComposing)
             return;
 
         if (_pendingFiles.Count == 0 && _currentVideoInfo == null)
@@ -282,9 +303,9 @@ public partial class MainWindow : Window
 
     private async void BlurFacesButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_isExtracting)
+        if (_isExtracting || _isComposing)
         {
-            MessageBox.Show("请先等待当前抽帧任务完成。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show("请先等待当前任务完成。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
@@ -341,6 +362,146 @@ public partial class MainWindow : Window
         {
             OutputPathTextBox.Text = dialog.FolderName;
         }
+    }
+
+    private void BrowseImageFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFolderDialog();
+        if (!string.IsNullOrWhiteSpace(ImageFolderTextBox.Text) && Directory.Exists(ImageFolderTextBox.Text))
+        {
+            dialog.InitialDirectory = ImageFolderTextBox.Text;
+        }
+
+        if (dialog.ShowDialog() == true)
+        {
+            ImageFolderTextBox.Text = dialog.FolderName;
+
+            if (string.IsNullOrWhiteSpace(ComposeOutputPathTextBox.Text))
+            {
+                string ext = GetComposeContainerExtension();
+                ComposeOutputPathTextBox.Text = Path.Combine(dialog.FolderName, $"output.{ext}");
+            }
+        }
+    }
+
+    private void BrowseComposeOutputButton_Click(object sender, RoutedEventArgs e)
+    {
+        string ext = GetComposeContainerExtension();
+        var dialog = new SaveFileDialog
+        {
+            Title = "选择输出视频文件",
+            Filter = $"{ext.ToUpperInvariant()} 文件|*.{ext}|所有文件|*.*",
+            FileName = $"output.{ext}",
+            AddExtension = true,
+            DefaultExt = ext
+        };
+
+        if (dialog.ShowDialog() == true)
+        {
+            ComposeOutputPathTextBox.Text = dialog.FileName;
+        }
+    }
+
+    private async void ComposeVideoButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isExtracting || _isComposing)
+            return;
+
+        string folder = ImageFolderTextBox.Text.Trim();
+        if (!Directory.Exists(folder))
+        {
+            MessageBox.Show("请选择有效的图片文件夹。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        double fps = Math.Clamp(ParseDouble(ComposeFpsComboBox.Text, 10), 1, 120);
+        string outputPath = ComposeOutputPathTextBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(outputPath))
+        {
+            outputPath = Path.Combine(folder, $"output.{GetComposeContainerExtension()}");
+            ComposeOutputPathTextBox.Text = outputPath;
+        }
+
+        string codec = (ComposeCodecComboBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "libx264";
+        int crf = (int)ComposeQualitySlider.Value;
+
+        _isComposing = true;
+        ComposeVideoButton.IsEnabled = false;
+        ComposeStopButton.IsEnabled = true;
+        ComposeProgressBar.Value = 0;
+        ComposeStatusTextBlock.Text = "准备开始合成...";
+        _cts?.Dispose();
+        _cts = new CancellationTokenSource();
+
+        try
+        {
+            var progress = new Progress<double>(p =>
+            {
+                ComposeProgressBar.Value = Math.Clamp(p, 0, 100);
+                ComposeStatusTextBlock.Text = $"正在合成视频... {p:F0}%";
+            });
+
+            string result = await _imageSequenceComposer.ComposeAsync(
+                folder,
+                outputPath,
+                fps,
+                codec,
+                crf,
+                progress,
+                _cts.Token);
+
+            ComposeProgressBar.Value = 100;
+            ComposeStatusTextBlock.Text = "图片合成视频完成";
+            string? outputFolder = Path.GetDirectoryName(result);
+            if (!string.IsNullOrWhiteSpace(outputFolder))
+            {
+                OpenFolder(outputFolder);
+            }
+
+            MessageBox.Show($"视频合成完成:\n{result}", "完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (OperationCanceledException)
+        {
+            ComposeStatusTextBlock.Text = "视频合成已取消";
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("图片合成视频失败", ex);
+            ComposeStatusTextBlock.Text = "视频合成失败";
+            MessageBox.Show($"视频合成失败: {ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            _isComposing = false;
+            ComposeVideoButton.IsEnabled = true;
+            ComposeStopButton.IsEnabled = false;
+        }
+    }
+
+    private void ComposeStopButton_Click(object sender, RoutedEventArgs e)
+    {
+        _cts?.Cancel();
+    }
+
+    private void ComposeQualitySlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (!IsLoaded)
+            return;
+
+        ComposeQualityValueTextBlock.Text = ((int)e.NewValue).ToString(CultureInfo.InvariantCulture);
+    }
+
+    private void ComposeContainerComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsLoaded)
+            return;
+
+        string path = ComposeOutputPathTextBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(path))
+            return;
+
+        string ext = GetComposeContainerExtension();
+        ComposeOutputPathTextBox.Text = Path.ChangeExtension(path, ext);
     }
 
     private void DurationSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -578,6 +739,11 @@ public partial class MainWindow : Window
         return double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out var value)
             ? value
             : fallback;
+    }
+
+    private string GetComposeContainerExtension()
+    {
+        return (ComposeContainerComboBox.SelectedItem as ComboBoxItem)?.Content?.ToString()?.ToLowerInvariant() ?? "mp4";
     }
 
     private static string FormatBytes(long bytes)

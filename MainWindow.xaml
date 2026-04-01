@@ -22,8 +22,10 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
-            <StackPanel>
+        <TabControl x:Name="MainTabControl" Grid.Row="0" SelectionChanged="MainTabControl_SelectionChanged">
+            <TabItem Header="视频抽帧">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
                 <Border x:Name="DropZoneBorder"
                         Height="150"
                         Margin="0,0,0,12"
@@ -257,10 +259,121 @@
                         </ItemsControl>
                     </ScrollViewer>
                 </GroupBox>
-            </StackPanel>
-        </ScrollViewer>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
 
-        <Border Grid.Row="1" Padding="10" Background="#FFFFFF" BorderBrush="#E0E0E0" BorderThickness="1" CornerRadius="8">
+            <TabItem Header="图片合成视频">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="0,8,0,0">
+                        <GroupBox Header="图片来源" Margin="0,0,0,12">
+                            <Grid Margin="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="100" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="图片文件夹:" />
+                                <TextBox x:Name="ImageFolderTextBox"
+                                         Grid.Column="1"
+                                         Margin="0,0,8,0"
+                                         materialDesign:HintAssist.Hint="选择包含 JPG/PNG/BMP 的文件夹" />
+                                <Button Grid.Column="2" Content="浏览..." Click="BrowseImageFolderButton_Click" />
+                            </Grid>
+                        </GroupBox>
+
+                        <GroupBox Header="合成配置" Margin="0,0,0,12">
+                            <StackPanel Margin="10">
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120" />
+                                        <ColumnDefinition Width="120" />
+                                        <ColumnDefinition Width="120" />
+                                        <ColumnDefinition Width="120" />
+                                        <ColumnDefinition Width="120" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="合成帧率(FPS):" />
+                                    <ComboBox x:Name="ComposeFpsComboBox"
+                                              Grid.Column="1"
+                                              Width="90"
+                                              IsEditable="True"
+                                              SelectedIndex="2">
+                                        <ComboBoxItem Content="1" />
+                                        <ComboBoxItem Content="5" />
+                                        <ComboBoxItem Content="10" />
+                                        <ComboBoxItem Content="24" />
+                                        <ComboBoxItem Content="30" />
+                                        <ComboBoxItem Content="60" />
+                                    </ComboBox>
+
+                                    <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="编码器:" />
+                                    <ComboBox x:Name="ComposeCodecComboBox" Grid.Column="3" SelectedIndex="0">
+                                        <ComboBoxItem Content="libx264" />
+                                        <ComboBoxItem Content="libx265" />
+                                        <ComboBoxItem Content="mpeg4" />
+                                    </ComboBox>
+
+                                    <TextBlock Grid.Column="4" VerticalAlignment="Center" Text="容器格式:" />
+                                    <ComboBox x:Name="ComposeContainerComboBox"
+                                              Grid.Column="5"
+                                              Width="120"
+                                              SelectedIndex="0"
+                                              SelectionChanged="ComposeContainerComboBox_SelectionChanged">
+                                        <ComboBoxItem Content="mp4" />
+                                        <ComboBoxItem Content="mkv" />
+                                        <ComboBoxItem Content="avi" />
+                                    </ComboBox>
+                                </Grid>
+
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="40" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="画质(CRF):" />
+                                    <Slider x:Name="ComposeQualitySlider"
+                                            Grid.Column="1"
+                                            Minimum="18"
+                                            Maximum="35"
+                                            Value="23"
+                                            TickFrequency="1"
+                                            IsSnapToTickEnabled="True"
+                                            ValueChanged="ComposeQualitySlider_ValueChanged" />
+                                    <TextBlock x:Name="ComposeQualityValueTextBlock" Grid.Column="2" VerticalAlignment="Center" Text="23" />
+                                </Grid>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="100" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="输出视频:" />
+                                    <TextBox x:Name="ComposeOutputPathTextBox" Grid.Column="1" Margin="0,0,8,0" />
+                                    <Button Grid.Column="2" Content="浏览..." Click="BrowseComposeOutputButton_Click" />
+                                </Grid>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="操作" Margin="0,0,0,12">
+                            <StackPanel Margin="10">
+                                <ProgressBar x:Name="ComposeProgressBar" Height="18" Minimum="0" Maximum="100" Value="0" Margin="0,0,0,6" />
+                                <TextBlock x:Name="ComposeStatusTextBlock" Margin="0,0,0,10" Foreground="#424242" Text="准备就绪" />
+                                <StackPanel Orientation="Horizontal">
+                                    <Button x:Name="ComposeVideoButton" Width="140" Margin="0,0,8,0" Content="开始合成视频" Click="ComposeVideoButton_Click" />
+                                    <Button x:Name="ComposeStopButton" Width="80" IsEnabled="False" Content="停止" Click="ComposeStopButton_Click" />
+                                </StackPanel>
+                            </StackPanel>
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <Border x:Name="ExtractBottomBar" Grid.Row="1" Padding="10" Background="#FFFFFF" BorderBrush="#E0E0E0" BorderThickness="1" CornerRadius="8">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
