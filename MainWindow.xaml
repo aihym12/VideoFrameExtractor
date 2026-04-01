@@ -1,0 +1,281 @@
+﻿<Window x:Class="VideoFrameExtractor.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+        mc:Ignorable="d"
+        Title="WPF 视频帧提取工具"
+        Width="980"
+        Height="900"
+        MinWidth="920"
+        MinHeight="760"
+        Background="#FAFAFA">
+    <Window.Resources>
+        <Style TargetType="Button" BasedOn="{StaticResource MaterialDesignRaisedButton}" />
+        <Style TargetType="ProgressBar" BasedOn="{StaticResource MaterialDesignLinearProgressBar}" />
+    </Window.Resources>
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <Border x:Name="DropZoneBorder"
+                        Height="150"
+                        Margin="0,0,0,12"
+                        Padding="12"
+                        AllowDrop="True"
+                        Background="#F5F5F5"
+                        BorderBrush="#BDBDBD"
+                        BorderThickness="2"
+                        CornerRadius="10"
+                        DragEnter="DropZone_DragEnter"
+                        DragLeave="DropZone_DragLeave"
+                        Drop="DropZone_Drop">
+                    <Grid>
+                        <Rectangle Stroke="#BDBDBD"
+                                   StrokeThickness="2"
+                                   RadiusX="8"
+                                   RadiusY="8"
+                                   StrokeDashArray="4,3"
+                                   Margin="2" />
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <TextBlock HorizontalAlignment="Center" FontSize="36" Text="📂" />
+                            <TextBlock Margin="0,8,0,4"
+                                       HorizontalAlignment="Center"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       Foreground="#212121"
+                                       Text="拖拽视频文件至此" />
+                            <TextBlock HorizontalAlignment="Center" Foreground="#757575" Text="支持 MP4 / AVI / MOV / MKV / WMV / FLV / WEBM" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <GroupBox Header="视频信息" Margin="0,0,0,12">
+                    <Grid Margin="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="文件名:" />
+                        <TextBlock x:Name="FileNameTextBlock" Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" Text="未选择" FontWeight="SemiBold" />
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Text="分辨率:" />
+                        <TextBlock x:Name="ResolutionTextBlock" Grid.Row="1" Grid.Column="1" Text="-" />
+                        <TextBlock Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" Text="帧率:" />
+                        <TextBlock x:Name="FpsTextBlock" Grid.Row="1" Grid.Column="3" Text="-" />
+
+                        <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="时长:" />
+                        <TextBlock x:Name="DurationTextBlock" Grid.Row="2" Grid.Column="1" Text="-" />
+                        <TextBlock Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" Text="大小:" />
+                        <TextBlock x:Name="SizeTextBlock" Grid.Row="2" Grid.Column="3" Text="-" />
+                    </Grid>
+                </GroupBox>
+
+                <GroupBox Header="抽帧配置" Margin="0,0,0,12">
+                    <StackPanel Margin="10">
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="80" />
+                                <ColumnDefinition Width="100" />
+                                <ColumnDefinition Width="80" />
+                                <ColumnDefinition Width="100" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="开始(秒):" />
+                            <TextBox x:Name="StartTimeTextBox" Grid.Column="1" Margin="4,0,10,0" Text="0" TextChanged="Config_Changed" />
+                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="结束(秒):" />
+                            <TextBox x:Name="EndTimeTextBox" Grid.Column="3" Margin="4,0,10,0" Text="15" TextChanged="Config_Changed" />
+                            <Slider x:Name="DurationSlider"
+                                    Grid.Column="4"
+                                    Minimum="1"
+                                    Maximum="600"
+                                    Value="15"
+                                    TickFrequency="1"
+                                    IsSnapToTickEnabled="True"
+                                    ValueChanged="DurationSlider_ValueChanged" />
+                        </Grid>
+
+                        <TextBlock Margin="0,4,0,4" FontWeight="SemiBold" Text="帧率模式" />
+                        <StackPanel Margin="8,0,0,8">
+                            <RadioButton x:Name="OriginalFpsRadioButton"
+                                         Margin="0,0,0,4"
+                                         GroupName="FrameRateModeGroup"
+                                         Content="原始帧率"
+                                         Checked="Config_Changed" />
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                <RadioButton x:Name="FixedFpsRadioButton"
+                                             VerticalAlignment="Center"
+                                             IsChecked="True"
+                                             GroupName="FrameRateModeGroup"
+                                             Content="固定 FPS"
+                                             Checked="Config_Changed" />
+                                <ComboBox x:Name="FixedFpsComboBox"
+                                          Width="100"
+                                          Margin="12,0,0,0"
+                                          IsEditable="True"
+                                          SelectedIndex="1"
+                                          SelectionChanged="Config_Changed">
+                                    <ComboBoxItem Content="1" />
+                                    <ComboBoxItem Content="5" />
+                                    <ComboBoxItem Content="10" />
+                                    <ComboBoxItem Content="30" />
+                                </ComboBox>
+                            </StackPanel>
+                            <RadioButton x:Name="SmartFpsRadioButton"
+                                         GroupName="FrameRateModeGroup"
+                                         Content="智能推荐"
+                                         Checked="Config_Changed" />
+                        </StackPanel>
+
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="120" />
+                                <ColumnDefinition Width="180" />
+                                <ColumnDefinition Width="120" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="输出格式:" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <RadioButton x:Name="JpgFormatRadioButton"
+                                             Margin="0,0,12,0"
+                                             IsChecked="True"
+                                             Content="JPG"
+                                             Checked="FormatRadioButton_Checked" />
+                                <RadioButton x:Name="PngFormatRadioButton" Content="PNG" Checked="FormatRadioButton_Checked" />
+                            </StackPanel>
+
+                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="图片质量:" />
+                            <Grid Grid.Column="3">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="40" />
+                                </Grid.ColumnDefinitions>
+                                <Slider x:Name="QualitySlider"
+                                        Grid.Column="0"
+                                        Minimum="0"
+                                        Maximum="100"
+                                        Value="85"
+                                        TickFrequency="5"
+                                        IsSnapToTickEnabled="True"
+                                        ValueChanged="QualitySlider_ValueChanged" />
+                                <TextBlock x:Name="QualityValueTextBlock" Grid.Column="1" VerticalAlignment="Center" Text="85" />
+                            </Grid>
+                        </Grid>
+
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="120" />
+                                <ColumnDefinition Width="240" />
+                                <ColumnDefinition Width="120" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="100" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="命名规则:" />
+                            <ComboBox x:Name="NamingPatternComboBox"
+                                      Grid.Column="1"
+                                      Margin="0,0,12,0"
+                                      SelectedIndex="0"
+                                      SelectionChanged="Config_Changed">
+                                <ComboBoxItem Content="frame_0001.jpg" />
+                                <ComboBoxItem Content="视频名_0001.jpg" />
+                                <ComboBoxItem Content="时间戳命名" />
+                            </ComboBox>
+
+                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="保存路径:" />
+                            <TextBox x:Name="OutputPathTextBox"
+                                     Grid.Column="3"
+                                     Margin="0,0,8,0"
+                                     materialDesign:HintAssist.Hint="默认: 视频同目录/视频名_Frames"
+                                     TextChanged="Config_Changed" />
+                            <Button Grid.Column="4" Content="浏览..." Click="BrowseButton_Click" />
+                        </Grid>
+
+                        <WrapPanel Margin="0,6,0,0">
+                            <CheckBox x:Name="GpuAccelerationCheckBox" Margin="0,0,16,0" Content="使用 GPU 加速" Checked="Config_Changed" Unchecked="Config_Changed" />
+                            <ComboBox x:Name="GpuModeComboBox"
+                                      Width="140"
+                                      Margin="0,0,16,0"
+                                      SelectedIndex="0"
+                                      SelectionChanged="Config_Changed">
+                                <ComboBoxItem Content="AUTO" />
+                                <ComboBoxItem Content="CUDA (NVIDIA)" />
+                                <ComboBoxItem Content="QSV (Intel)" />
+                                <ComboBoxItem Content="AMF (AMD)" />
+                            </ComboBox>
+                            <CheckBox x:Name="AutoStartCheckBox" Margin="0,0,16,0" Content="拖入后自动开始" Checked="Config_Changed" Unchecked="Config_Changed" />
+                            <CheckBox x:Name="OpenFolderCheckBox" IsChecked="True" Content="完成后打开文件夹" Checked="Config_Changed" Unchecked="Config_Changed" />
+                        </WrapPanel>
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="预估输出" Margin="0,0,0,12">
+                    <Grid Margin="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="预计生成:" />
+                        <TextBlock x:Name="EstimatedFramesTextBlock" Grid.Column="1" Text="-" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="预计大小:" />
+                        <TextBlock x:Name="EstimatedSizeTextBlock" Grid.Column="3" Text="-" FontWeight="SemiBold" />
+                    </Grid>
+                </GroupBox>
+
+                <GroupBox Header="预览（前 5 张）" Margin="0,0,0,12">
+                    <ScrollViewer Margin="10" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                        <ItemsControl x:Name="PreviewItemsControl">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Width="150" Height="90" Margin="0,0,8,0" BorderBrush="#E0E0E0" BorderThickness="1">
+                                        <Image Stretch="UniformToFill" Source="{Binding}" />
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </GroupBox>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Border Grid.Row="1" Padding="10" Background="#FFFFFF" BorderBrush="#E0E0E0" BorderThickness="1" CornerRadius="8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <ProgressBar x:Name="ExtractionProgressBar" Height="18" Minimum="0" Maximum="100" Value="0" />
+                    <TextBlock x:Name="StatusTextBlock" Margin="0,6,0,0" Foreground="#424242" Text="准备就绪" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="12,0,0,0">
+                    <Button x:Name="StartButton" Width="110" Margin="0,0,8,0" Content="开始提取" Click="StartButton_Click" />
+                    <Button x:Name="BlurFacesButton" Width="120" Margin="0,0,8,0" Content="人脸自动涂抹" Click="BlurFacesButton_Click" />
+                    <Button x:Name="StopButton" Width="80" IsEnabled="False" Content="停止" Click="StopButton_Click" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
