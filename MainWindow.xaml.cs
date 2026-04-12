@@ -132,9 +132,6 @@ public partial class MainWindow : Window
 
     private async void DropZone_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (e.ClickCount != 2)
-            return;
-
         var dialog = new OpenFileDialog
         {
             Title = "选择视频文件",
