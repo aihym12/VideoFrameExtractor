@@ -130,6 +130,48 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void DropZone_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount != 2)
+            return;
+
+        var dialog = new OpenFileDialog
+        {
+            Title = "选择视频文件",
+            Filter = "视频文件|*.mp4;*.avi;*.mov;*.mkv;*.wmv;*.flv;*.webm;*.m4v;*.ts|所有文件|*.*",
+            Multiselect = true
+        };
+
+        if (dialog.ShowDialog() != true)
+            return;
+
+        var validFiles = dialog.FileNames.Where(PathHelper.IsSupportedVideoFormat).Distinct().ToList();
+
+        if (validFiles.Count == 0)
+        {
+            MessageBox.Show("未检测到支持的视频格式。", "提示", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        _pendingFiles.Clear();
+        _pendingFiles.AddRange(validFiles);
+
+        try
+        {
+            await LoadVideoInfoAsync(_pendingFiles[0]);
+
+            if (AutoStartCheckBox.IsChecked == true)
+            {
+                await StartExtractionAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("文件选择处理失败", ex);
+            MessageBox.Show($"加载视频失败: {ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
     private void DropZone_DragEnter(object sender, DragEventArgs e)
     {
         bool isFileDrop = e.Data.GetDataPresent(DataFormats.FileDrop);
@@ -202,10 +244,7 @@ public partial class MainWindow : Window
             EndTimeTextBox.Text = Math.Min(15, DurationSlider.Maximum).ToString("F0", CultureInfo.InvariantCulture);
         }
 
-        if (string.IsNullOrWhiteSpace(OutputPathTextBox.Text))
-        {
-            OutputPathTextBox.Text = PathHelper.GetDefaultOutputFolder(filePath);
-        }
+        OutputPathTextBox.Text = PathHelper.GetDefaultOutputFolder(filePath);
 
         StatusTextBlock.Text = "准备就绪";
         UpdateEstimatedOutput();

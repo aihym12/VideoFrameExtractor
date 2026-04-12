@@ -37,7 +37,8 @@
                         CornerRadius="10"
                         DragEnter="DropZone_DragEnter"
                         DragLeave="DropZone_DragLeave"
-                        Drop="DropZone_Drop">
+                        Drop="DropZone_Drop"
+                        MouseLeftButtonDown="DropZone_MouseDoubleClick">
                     <Grid>
                         <Rectangle Stroke="#BDBDBD"
                                    StrokeThickness="2"
@@ -52,7 +53,7 @@
                                        FontSize="18"
                                        FontWeight="SemiBold"
                                        Foreground="#212121"
-                                       Text="拖拽视频文件至此" />
+                                       Text="拖拽视频文件至此 / 双击选择文件" />
                             <TextBlock HorizontalAlignment="Center" Foreground="#757575" Text="支持 MP4 / AVI / MOV / MKV / WMV / FLV / WEBM" />
                         </StackPanel>
                     </Grid>
