@@ -38,7 +38,7 @@
                         DragEnter="DropZone_DragEnter"
                         DragLeave="DropZone_DragLeave"
                         Drop="DropZone_Drop"
-                        MouseDoubleClick="DropZone_MouseDoubleClick">
+                        MouseLeftButtonDown="DropZone_MouseLeftButtonDown">
                     <Grid>
                         <Rectangle Stroke="#BDBDBD"
                                    StrokeThickness="2"
