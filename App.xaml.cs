@@ -14,6 +14,12 @@ namespace VideoFrameExtractor
         {
             try
             {
+                string proxyAddress = VideoFrameExtractor.Properties.Settings.Default.ProxyAddress;
+                if (!string.IsNullOrWhiteSpace(proxyAddress))
+                {
+                    ProxyHelper.ApplyProxy(proxyAddress);
+                }
+
                 if (!FFmpegService.IsFFmpegInstalled())
                 {
                     var result = MessageBox.Show(

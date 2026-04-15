@@ -23,6 +23,22 @@ public class FaceBlurService
     private const double IoUMergeThreshold = 0.3;
 
     /// <summary>
+    /// 获取缺失的级联分类器文件名列表（用于下载前提示用户）
+    /// </summary>
+    public static List<string> GetMissingCascadeFileNames()
+    {
+        string modelDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "models");
+        var missing = new List<string>();
+
+        if (!File.Exists(Path.Combine(modelDirectory, FaceCascadeFileName)))
+            missing.Add(FaceCascadeFileName);
+        if (!File.Exists(Path.Combine(modelDirectory, ProfileCascadeFileName)))
+            missing.Add(ProfileCascadeFileName);
+        if (!File.Exists(Path.Combine(modelDirectory, EyeCascadeFileName)))
+            missing.Add(EyeCascadeFileName);
+
+        return missing;
+    }
     /// 眼睛检测最小像素尺寸下限
     /// </summary>
     private const int MinEyeSizePixels = 8;
