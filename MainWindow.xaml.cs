@@ -382,6 +382,26 @@ public partial class MainWindow : Window
 
         try
         {
+            var missingFiles = FaceBlurService.GetMissingCascadeFileNames();
+            if (missingFiles.Count > 0)
+            {
+                string fileList = string.Join("\n", missingFiles.Select(f => $"  • {f}"));
+                var downloadResult = MessageBox.Show(
+                    $"人脸检测需要以下模型文件，当前缺失:\n{fileList}\n\n是否立即从网络下载？\n（需要网络连接，文件较小约几百KB）",
+                    "缺少人脸检测模型",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+
+                if (downloadResult != MessageBoxResult.Yes)
+                {
+                    BlurFacesButton.IsEnabled = true;
+                    StartButton.IsEnabled = true;
+                    return;
+                }
+
+                StatusTextBlock.Text = "正在下载人脸检测模型...";
+            }
+
             var blurSettings = BuildFaceBlurSettings();
             var progress = new Progress<string>(status => StatusTextBlock.Text = status);
             int modifiedCount = await _faceBlurService.BlurFacesInFolderAsync(targetFolder, blurSettings, progress);

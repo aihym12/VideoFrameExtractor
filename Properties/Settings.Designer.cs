@@ -190,5 +190,17 @@ namespace VideoFrameExtractor.Properties {
                 this["AutoBlurAfterExtraction"] = value;
             }
         }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string ProxyAddress {
+            get {
+                return ((string)(this["ProxyAddress"]));
+            }
+            set {
+                this["ProxyAddress"] = value;
+            }
+        }
     }
 }
