@@ -23,6 +23,36 @@ public class FaceBlurService
     private const double IoUMergeThreshold = 0.3;
 
     /// <summary>
+    /// 眼睛检测最小像素尺寸下限
+    /// </summary>
+    private const int MinEyeSizePixels = 8;
+
+    /// <summary>
+    /// 眼睛宽度相对于脸部宽度的最大比例（过大的检测为误检）
+    /// </summary>
+    private const double MaxEyeWidthRatio = 0.5;
+
+    /// <summary>
+    /// 眼睛高度相对于脸部高度的最大比例
+    /// </summary>
+    private const double MaxEyeHeightRatio = 0.4;
+
+    /// <summary>
+    /// 眼睛宽度相对于脸部宽度的最小比例（过小的检测为误检）
+    /// </summary>
+    private const double MinEyeWidthRatio = 0.05;
+
+    /// <summary>
+    /// 从眼睛位置到脸部中心的垂直偏移比例（基于人脸比例，眼睛在脸部上方约35%处）
+    /// </summary>
+    private const double EyeToFaceCenterOffsetRatio = 0.15;
+
+    /// <summary>
+    /// 皮肤像素面积相对于脸部面积的最小比例，低于此值认为皮肤检测不可信
+    /// </summary>
+    private const double MinSkinAreaRatio = 0.05;
+
+    /// <summary>
     /// 对目录中的图片执行人脸检测并高斯涂抹
     /// </summary>
     public async Task<int> BlurFacesInFolderAsync(
@@ -83,9 +113,10 @@ public class FaceBlurService
                         continue;
                     }
 
+                    var imageSize = image.Size();
                     foreach (Rect face in validatedFaces)
                     {
-                        var refinedFace = RefineFaceRect(face, gray, image, eyeClassifier, image.Size());
+                        var refinedFace = RefineFaceRect(face, gray, image, eyeClassifier, imageSize);
                         BlurFaceEllipse(image, refinedFace);
                     }
 
@@ -236,7 +267,7 @@ public class FaceBlurService
             return null;
 
         using var searchRoi = new Mat(gray, searchArea);
-        int minEyeSize = Math.Max(8, face.Width / 10);
+        int minEyeSize = Math.Max(MinEyeSizePixels, face.Width / 10);
         Rect[] eyes = eyeClassifier.DetectMultiScale(
             searchRoi,
             scaleFactor: 1.05,
@@ -249,9 +280,9 @@ public class FaceBlurService
 
         // 过滤掉不合理的眼睛检测（太大或太小的）
         var validEyes = eyes.Where(e =>
-            e.Width < face.Width * 0.5 &&
-            e.Height < face.Height * 0.4 &&
-            e.Width > face.Width * 0.05).ToArray();
+            e.Width < face.Width * MaxEyeWidthRatio &&
+            e.Height < face.Height * MaxEyeHeightRatio &&
+            e.Width > face.Width * MinEyeWidthRatio).ToArray();
 
         if (validEyes.Length == 0)
             return null;
@@ -262,7 +293,7 @@ public class FaceBlurService
 
         // 眼睛大约在脸部上方35%处，据此估算脸部中心
         int faceCenterX = (int)eyeCenterX;
-        int faceCenterY = (int)(eyeCenterY + face.Height * 0.15);
+        int faceCenterY = (int)(eyeCenterY + face.Height * EyeToFaceCenterOffsetRatio);
 
         var refined = new Rect(
             faceCenterX - face.Width / 2,
@@ -310,7 +341,7 @@ public class FaceBlurService
 
         var moments = Cv2.Moments(skinMask, true);
         // 需要有足够的皮肤像素才认为结果可信
-        double minSkinArea = face.Width * face.Height * 0.05;
+        double minSkinArea = face.Width * face.Height * MinSkinAreaRatio;
         if (moments.M00 > minSkinArea)
         {
             int skinCenterX = (int)(moments.M10 / moments.M00) + searchArea.X;
