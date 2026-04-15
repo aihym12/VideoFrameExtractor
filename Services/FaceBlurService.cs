@@ -255,9 +255,9 @@ public class FaceBlurService
         // 绘制填充椭圆作为遮罩
         Cv2.Ellipse(mask, center, axes, 0, 0, 360, Scalar.All(255), -1);
 
-        // 根据强度计算高斯模糊核大小
+        // 根据强度计算高斯模糊核大小（强度1≈0.515x，强度100=2.0x）
         int baseKernel = Math.Max(31, ((Math.Min(face.Width, face.Height) / 2) * 2) + 1);
-        double strengthMultiplier = 0.5 + (strength / 100.0) * 1.5; // 0.5x ~ 2.0x
+        double strengthMultiplier = 0.5 + (strength / 100.0) * 1.5;
         int kernel = Math.Max(3, ((int)(baseKernel * strengthMultiplier) / 2) * 2 + 1);
 
         using var blurred = new Mat();
@@ -279,7 +279,7 @@ public class FaceBlurService
         var axes = new Size(face.Width / 2, face.Height / 2);
         Cv2.Ellipse(mask, center, axes, 0, 0, 360, Scalar.All(255), -1);
 
-        // 根据强度计算马赛克块大小：强度越大，块越大，马赛克越明显
+        // 根据强度计算马赛克块大小：强度1 → 约5%人脸尺寸，强度100 → 约30%人脸尺寸
         int minFaceDim = Math.Min(face.Width, face.Height);
         int blockSize = Math.Max(2, (int)(minFaceDim * (0.05 + (strength / 100.0) * 0.25)));
 
