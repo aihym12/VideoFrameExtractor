@@ -18,6 +18,11 @@ public class FaceBlurService
     private const string EyeCascadeDownloadUrl = "https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_eye_tree_eyeglasses.xml";
 
     /// <summary>
+    /// 合并重叠人脸时的 IoU 阈值，超过此值视为同一张脸
+    /// </summary>
+    private const double IoUMergeThreshold = 0.3;
+
+    /// <summary>
     /// 对目录中的图片执行人脸检测并高斯涂抹
     /// </summary>
     public async Task<int> BlurFacesInFolderAsync(
@@ -160,7 +165,7 @@ public class FaceBlurService
             bool isOverlapping = false;
             for (int i = 0; i < merged.Count; i++)
             {
-                if (ComputeIoU(face, merged[i]) > 0.3)
+                if (ComputeIoU(face, merged[i]) > IoUMergeThreshold)
                 {
                     // 保留面积更大的检测结果
                     if (face.Width * face.Height > merged[i].Width * merged[i].Height)
@@ -224,6 +229,7 @@ public class FaceBlurService
         if (face.Width <= 0 || face.Height <= 0)
             return false;
 
+        // 初筛使用较宽松的范围兼容侧脸等非标准角度
         double aspectRatio = face.Width / (double)face.Height;
         if (aspectRatio is < 0.5 or > 1.8)
             return false;
@@ -242,7 +248,7 @@ public class FaceBlurService
         // 确保 ROI 在图像范围内
         upperFace = ClampRect(upperFace, imageSize);
         if (upperFace.Width <= 0 || upperFace.Height <= 0)
-            return true;
+            return false;
 
         using var upperFaceRoi = new Mat(gray, upperFace);
 
@@ -258,7 +264,7 @@ public class FaceBlurService
         if (eyes.Length >= 1)
             return true;
 
-        // 没检测到眼睛时，使用更严格的面积和宽高比来过滤误检
+        // 没检测到眼睛时，使用更严格的面积和宽高比过滤误检（排除侧脸宽高比极端的检测）
         return aspectRatio is >= 0.7 and <= 1.4
             && areaRatio >= 0.02;
     }
