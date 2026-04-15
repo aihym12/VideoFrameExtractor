@@ -104,6 +104,12 @@ public partial class MainWindow : Window
             GpuModeComboBox.IsEnabled = GpuAccelerationCheckBox.IsChecked == true;
             FixedFpsComboBox.IsEnabled = FixedFpsRadioButton.IsChecked == true;
             UpdateQualityState();
+
+            // 加载人脸涂抹设置
+            FaceBlurModeComboBox.SelectedIndex = Math.Clamp(Properties.Settings.Default.FaceBlurMode, 0, 1);
+            FaceBlurStrengthSlider.Value = Math.Clamp(Properties.Settings.Default.FaceBlurStrength, 1, 100);
+            FaceDetectionSensitivityComboBox.SelectedIndex = Math.Clamp(Properties.Settings.Default.FaceDetectionSensitivity, 0, 2);
+            AutoBlurAfterExtractionCheckBox.IsChecked = Properties.Settings.Default.AutoBlurAfterExtraction;
         }
         catch (Exception ex)
         {
@@ -130,6 +136,13 @@ public partial class MainWindow : Window
             Properties.Settings.Default.DefaultFps = GetFixedFps();
             Properties.Settings.Default.DefaultGpuMode = GpuModeComboBox.SelectedIndex;
             Properties.Settings.Default.ProxyAddress = ProxyTextBox.Text.Trim();
+
+            // 保存人脸涂抹设置
+            Properties.Settings.Default.FaceBlurMode = FaceBlurModeComboBox.SelectedIndex;
+            Properties.Settings.Default.FaceBlurStrength = (int)FaceBlurStrengthSlider.Value;
+            Properties.Settings.Default.FaceDetectionSensitivity = FaceDetectionSensitivityComboBox.SelectedIndex;
+            Properties.Settings.Default.AutoBlurAfterExtraction = AutoBlurAfterExtractionCheckBox.IsChecked == true;
+
             Properties.Settings.Default.Save();
         }
         catch (Exception ex)
@@ -312,6 +325,15 @@ public partial class MainWindow : Window
                     _cts.Token);
 
                 _lastOutputFolder = result.OutputFolder;
+
+                // 抽帧完成后自动执行人脸涂抹
+                if (AutoBlurAfterExtractionCheckBox.IsChecked == true)
+                {
+                    var blurSettings = BuildFaceBlurSettings();
+                    var blurProgress = new Progress<string>(status => StatusTextBlock.Text = status);
+                    await _faceBlurService.BlurFacesInFolderAsync(result.OutputFolder, blurSettings, blurProgress, _cts.Token);
+                }
+
                 await LoadPreviewAsync(result.OutputFolder, settings.Format);
 
                 if (OpenFolderCheckBox.IsChecked == true)
@@ -409,8 +431,9 @@ public partial class MainWindow : Window
                 StatusTextBlock.Text = "正在下载人脸检测模型...";
             }
 
+            var blurSettings = BuildFaceBlurSettings();
             var progress = new Progress<string>(status => StatusTextBlock.Text = status);
-            int modifiedCount = await _faceBlurService.BlurFacesInFolderAsync(targetFolder, progress);
+            int modifiedCount = await _faceBlurService.BlurFacesInFolderAsync(targetFolder, blurSettings, progress);
 
             await LoadPreviewAsync(targetFolder, null);
             StatusTextBlock.Text = modifiedCount > 0
@@ -806,6 +829,47 @@ public partial class MainWindow : Window
         }
 
         return Math.Clamp(fps, 1, 240);
+    }
+
+    private FaceBlurSettings BuildFaceBlurSettings()
+    {
+        return new FaceBlurSettings
+        {
+            BlurMode = FaceBlurModeComboBox.SelectedIndex == 1 ? FaceBlurMode.Mosaic : FaceBlurMode.Gaussian,
+            BlurStrength = (int)FaceBlurStrengthSlider.Value,
+            Sensitivity = FaceDetectionSensitivityComboBox.SelectedIndex switch
+            {
+                0 => FaceDetectionSensitivity.Low,
+                2 => FaceDetectionSensitivity.High,
+                _ => FaceDetectionSensitivity.Medium
+            },
+            AutoBlurAfterExtraction = AutoBlurAfterExtractionCheckBox.IsChecked == true
+        };
+    }
+
+    private void FaceBlurConfig_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded)
+            return;
+
+        SaveSettings();
+    }
+
+    private void FaceBlurConfig_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsLoaded)
+            return;
+
+        SaveSettings();
+    }
+
+    private void FaceBlurStrengthSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (!IsLoaded)
+            return;
+
+        FaceBlurStrengthValueTextBlock.Text = ((int)e.NewValue).ToString(CultureInfo.InvariantCulture);
+        SaveSettings();
     }
 
     private string ResolveFaceBlurTargetFolder()

@@ -142,6 +142,54 @@ namespace VideoFrameExtractor.Properties {
                 this["DefaultGpuMode"] = value;
             }
         }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("0")]
+        public int FaceBlurMode {
+            get {
+                return ((int)(this["FaceBlurMode"]));
+            }
+            set {
+                this["FaceBlurMode"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("50")]
+        public int FaceBlurStrength {
+            get {
+                return ((int)(this["FaceBlurStrength"]));
+            }
+            set {
+                this["FaceBlurStrength"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("1")]
+        public int FaceDetectionSensitivity {
+            get {
+                return ((int)(this["FaceDetectionSensitivity"]));
+            }
+            set {
+                this["FaceDetectionSensitivity"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("False")]
+        public bool AutoBlurAfterExtraction {
+            get {
+                return ((bool)(this["AutoBlurAfterExtraction"]));
+            }
+            set {
+                this["AutoBlurAfterExtraction"] = value;
+            }
+        }
 
         [global::System.Configuration.UserScopedSettingAttribute()]
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]

@@ -2,6 +2,7 @@ using System.IO;
 using System.Net.Http;
 using OpenCvSharp;
 using VideoFrameExtractor.Helpers;
+using VideoFrameExtractor.Models;
 
 namespace VideoFrameExtractor.Services;
 
@@ -39,6 +40,8 @@ public class FaceBlurService
 
         return missing;
     }
+
+    /// <summary>
     /// 眼睛检测最小像素尺寸下限
     /// </summary>
     private const int MinEyeSizePixels = 8;
@@ -69,13 +72,16 @@ public class FaceBlurService
     private const double MinSkinAreaRatio = 0.05;
 
     /// <summary>
-    /// 对目录中的图片执行人脸检测并高斯涂抹
+    /// 对目录中的图片执行人脸检测并涂抹
     /// </summary>
     public async Task<int> BlurFacesInFolderAsync(
         string folderPath,
+        FaceBlurSettings? blurSettings = null,
         IProgress<string>? progress = null,
         CancellationToken cancellationToken = default)
     {
+        blurSettings ??= new FaceBlurSettings();
+
         if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
             throw new DirectoryNotFoundException("目标图片目录不存在。");
 
@@ -101,6 +107,9 @@ public class FaceBlurService
             if (faceClassifier.Empty() || profileClassifier.Empty() || eyeClassifier.Empty())
                 throw new InvalidOperationException("OpenCV 人脸检测器初始化失败。");
 
+            // 根据灵敏度设置检测参数
+            GetDetectionParameters(blurSettings.Sensitivity, out double scaleFactor, out int minNeighbors);
+
             int changedCount = 0;
             for (int i = 0; i < files.Count; i++)
             {
@@ -117,10 +126,10 @@ public class FaceBlurService
                     Cv2.CvtColor(image, gray, ColorConversionCodes.BGR2GRAY);
                     Cv2.EqualizeHist(gray, gray);
 
-                    var allFaces = DetectFacesMultiPass(gray, faceClassifier, profileClassifier);
+                    var allFaces = DetectFacesMultiPass(gray, faceClassifier, profileClassifier, scaleFactor, minNeighbors);
 
                     var validatedFaces = allFaces
-                        .Where(face => IsLikelyFace(face, image.Size(), gray, eyeClassifier))
+                        .Where(face => IsLikelyFace(face, image.Size(), gray, eyeClassifier, blurSettings.Sensitivity))
                         .ToArray();
 
                     if (validatedFaces.Length == 0)
@@ -133,7 +142,7 @@ public class FaceBlurService
                     foreach (Rect face in validatedFaces)
                     {
                         var refinedFace = RefineFaceRect(face, gray, image, eyeClassifier, imageSize);
-                        BlurFaceEllipse(image, refinedFace);
+                        ApplyFaceBlur(image, refinedFace, blurSettings);
                     }
 
                     Cv2.ImWrite(file, image);
@@ -151,26 +160,59 @@ public class FaceBlurService
     }
 
     /// <summary>
+    /// 根据灵敏度获取检测参数
+    /// </summary>
+    private static void GetDetectionParameters(FaceDetectionSensitivity sensitivity, out double scaleFactor, out int minNeighbors)
+    {
+        switch (sensitivity)
+        {
+            case FaceDetectionSensitivity.Low:
+                scaleFactor = 1.1;
+                minNeighbors = 6;
+                break;
+            case FaceDetectionSensitivity.High:
+                scaleFactor = 1.03;
+                minNeighbors = 2;
+                break;
+            default: // Medium
+                scaleFactor = 1.05;
+                minNeighbors = 4;
+                break;
+        }
+    }
+
+    /// <summary>
+    /// 根据设置应用人脸涂抹效果
+    /// </summary>
+    private static void ApplyFaceBlur(Mat image, Rect face, FaceBlurSettings settings)
+    {
+        if (settings.BlurMode == FaceBlurMode.Mosaic)
+            MosaicFaceEllipse(image, face, settings.BlurStrength);
+        else
+            BlurFaceEllipse(image, face, settings.BlurStrength);
+    }
+
+    /// <summary>
     /// 多策略人脸检测：正脸 + 侧脸 + 不同参数组合，提高检出率
     /// </summary>
-    private static List<Rect> DetectFacesMultiPass(Mat gray, CascadeClassifier faceClassifier, CascadeClassifier profileClassifier)
+    private static List<Rect> DetectFacesMultiPass(Mat gray, CascadeClassifier faceClassifier, CascadeClassifier profileClassifier, double scaleFactor, int minNeighbors)
     {
         int minSide = Math.Max(40, Math.Min(gray.Width, gray.Height) / 10);
         var minSize = new Size(minSide, minSide);
 
-        // 正脸检测 - 使用较宽松的参数提高检出率
+        // 正脸检测
         Rect[] frontalFaces = faceClassifier.DetectMultiScale(
             gray,
-            scaleFactor: 1.05,
-            minNeighbors: 4,
+            scaleFactor: scaleFactor,
+            minNeighbors: minNeighbors,
             flags: HaarDetectionTypes.ScaleImage,
             minSize: minSize);
 
         // 侧脸检测 - 左侧脸
         Rect[] profileFacesLeft = profileClassifier.DetectMultiScale(
             gray,
-            scaleFactor: 1.05,
-            minNeighbors: 4,
+            scaleFactor: scaleFactor,
+            minNeighbors: minNeighbors,
             flags: HaarDetectionTypes.ScaleImage,
             minSize: minSize);
 
@@ -179,8 +221,8 @@ public class FaceBlurService
         Cv2.Flip(gray, flipped, FlipMode.Y);
         Rect[] profileFacesRightFlipped = profileClassifier.DetectMultiScale(
             flipped,
-            scaleFactor: 1.05,
-            minNeighbors: 4,
+            scaleFactor: scaleFactor,
+            minNeighbors: minNeighbors,
             flags: HaarDetectionTypes.ScaleImage,
             minSize: minSize);
 
@@ -381,9 +423,9 @@ public class FaceBlurService
     }
 
     /// <summary>
-    /// 使用椭圆形遮罩涂抹人脸区域，贴合脸型
+    /// 使用椭圆形遮罩高斯涂抹人脸区域
     /// </summary>
-    private static void BlurFaceEllipse(Mat image, Rect face)
+    private static void BlurFaceEllipse(Mat image, Rect face, int strength)
     {
         // 创建与原图等大的遮罩
         using var mask = new Mat(image.Size(), MatType.CV_8UC1, Scalar.All(0));
@@ -395,8 +437,11 @@ public class FaceBlurService
         // 绘制填充椭圆作为遮罩
         Cv2.Ellipse(mask, center, axes, 0, 0, 360, Scalar.All(255), -1);
 
-        // 对整张图片做高斯模糊
-        int kernel = Math.Max(31, ((Math.Min(face.Width, face.Height) / 2) * 2) + 1);
+        // 根据强度计算高斯模糊核大小（强度1≈0.515x，强度100=2.0x）
+        int baseKernel = Math.Max(31, ((Math.Min(face.Width, face.Height) / 2) * 2) + 1);
+        double strengthMultiplier = 0.5 + (strength / 100.0) * 1.5;
+        int kernel = Math.Max(3, ((int)(baseKernel * strengthMultiplier) / 2) * 2 + 1);
+
         using var blurred = new Mat();
         Cv2.GaussianBlur(image, blurred, new Size(kernel, kernel), 0);
 
@@ -404,18 +449,90 @@ public class FaceBlurService
         blurred.CopyTo(image, mask);
     }
 
-    private static bool IsLikelyFace(Rect face, Size imageSize, Mat gray, CascadeClassifier eyeClassifier)
+    /// <summary>
+    /// 使用椭圆形遮罩马赛克涂抹人脸区域
+    /// </summary>
+    private static void MosaicFaceEllipse(Mat image, Rect face, int strength)
+    {
+        // 创建与原图等大的遮罩
+        using var mask = new Mat(image.Size(), MatType.CV_8UC1, Scalar.All(0));
+
+        var center = new Point(face.X + face.Width / 2, face.Y + face.Height / 2);
+        var axes = new Size(face.Width / 2, face.Height / 2);
+        Cv2.Ellipse(mask, center, axes, 0, 0, 360, Scalar.All(255), -1);
+
+        // 根据强度计算马赛克块大小：强度1 → 约5%人脸尺寸，强度100 → 约30%人脸尺寸
+        int minFaceDim = Math.Min(face.Width, face.Height);
+        int blockSize = Math.Max(2, (int)(minFaceDim * (0.05 + (strength / 100.0) * 0.25)));
+
+        // 确保 face 区域在图像范围内
+        var clampedFace = ClampRect(face, image.Size());
+        if (clampedFace.Width <= 0 || clampedFace.Height <= 0)
+            return;
+
+        // 创建马赛克效果：缩小再放大
+        using var faceRoi = new Mat(image, clampedFace);
+        using var small = new Mat();
+        var smallSize = new Size(
+            Math.Max(1, clampedFace.Width / blockSize),
+            Math.Max(1, clampedFace.Height / blockSize));
+        Cv2.Resize(faceRoi, small, smallSize, interpolation: InterpolationFlags.Linear);
+        using var mosaic = new Mat();
+        Cv2.Resize(small, mosaic, new Size(clampedFace.Width, clampedFace.Height), interpolation: InterpolationFlags.Nearest);
+
+        // 创建一张带马赛克效果的完整图像副本
+        using var mosaicFull = image.Clone();
+        mosaic.CopyTo(new Mat(mosaicFull, clampedFace));
+
+        // 使用椭圆遮罩合成
+        mosaicFull.CopyTo(image, mask);
+    }
+
+    private static bool IsLikelyFace(Rect face, Size imageSize, Mat gray, CascadeClassifier eyeClassifier, FaceDetectionSensitivity sensitivity)
     {
         if (face.Width <= 0 || face.Height <= 0)
             return false;
 
-        // 初筛使用较宽松的范围兼容侧脸等非标准角度
         double aspectRatio = face.Width / (double)face.Height;
-        if (aspectRatio is < 0.5 or > 1.8)
+        double areaRatio = (face.Width * face.Height) / (double)(imageSize.Width * imageSize.Height);
+
+        // 根据灵敏度调整验证阈值
+        double minAspectRatio, maxAspectRatio, minAreaRatio, maxAreaRatio, strictMinAspectRatio, strictMaxAspectRatio, strictMinAreaRatio;
+        switch (sensitivity)
+        {
+            case FaceDetectionSensitivity.High:
+                minAspectRatio = 0.4;
+                maxAspectRatio = 2.0;
+                minAreaRatio = 0.005;
+                maxAreaRatio = 0.85;
+                strictMinAspectRatio = 0.6;
+                strictMaxAspectRatio = 1.6;
+                strictMinAreaRatio = 0.01;
+                break;
+            case FaceDetectionSensitivity.Low:
+                minAspectRatio = 0.6;
+                maxAspectRatio = 1.5;
+                minAreaRatio = 0.02;
+                maxAreaRatio = 0.65;
+                strictMinAspectRatio = 0.8;
+                strictMaxAspectRatio = 1.3;
+                strictMinAreaRatio = 0.03;
+                break;
+            default: // Medium
+                minAspectRatio = 0.5;
+                maxAspectRatio = 1.8;
+                minAreaRatio = 0.01;
+                maxAreaRatio = 0.75;
+                strictMinAspectRatio = 0.7;
+                strictMaxAspectRatio = 1.4;
+                strictMinAreaRatio = 0.02;
+                break;
+        }
+
+        if (aspectRatio < minAspectRatio || aspectRatio > maxAspectRatio)
             return false;
 
-        double areaRatio = (face.Width * face.Height) / (double)(imageSize.Width * imageSize.Height);
-        if (areaRatio is < 0.01 or > 0.75)
+        if (areaRatio < minAreaRatio || areaRatio > maxAreaRatio)
             return false;
 
         if (face.Y > imageSize.Height * 0.92)
@@ -439,14 +556,12 @@ public class FaceBlurService
             flags: HaarDetectionTypes.ScaleImage,
             minSize: new Size(Math.Max(8, face.Width / 12), Math.Max(8, face.Height / 14)));
 
-        // 即使未检测到眼睛，如果面积比例合理也认为是人脸
-        // 这对侧脸、眯眼、遮挡等场景更友好
         if (eyes.Length >= 1)
             return true;
 
-        // 没检测到眼睛时，使用更严格的面积和宽高比过滤误检（排除侧脸宽高比极端的检测）
-        return aspectRatio is >= 0.7 and <= 1.4
-            && areaRatio >= 0.02;
+        // 没检测到眼睛时，使用更严格的面积和宽高比过滤误检
+        return aspectRatio >= strictMinAspectRatio && aspectRatio <= strictMaxAspectRatio
+            && areaRatio >= strictMinAreaRatio;
     }
 
     /// <summary>
