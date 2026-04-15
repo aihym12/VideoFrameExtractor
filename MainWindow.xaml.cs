@@ -69,6 +69,12 @@ public partial class MainWindow : Window
             AutoStartCheckBox.IsChecked = Properties.Settings.Default.AutoStart;
             OpenFolderCheckBox.IsChecked = Properties.Settings.Default.OpenFolderWhenDone;
             QualitySlider.Value = Properties.Settings.Default.DefaultQuality;
+            ProxyTextBox.Text = Properties.Settings.Default.ProxyAddress;
+
+            if (!string.IsNullOrWhiteSpace(ProxyTextBox.Text))
+            {
+                ProxyHelper.ApplyProxy(ProxyTextBox.Text.Trim());
+            }
 
             if (Properties.Settings.Default.DefaultFrameRateMode == (int)FrameRateMode.Original)
                 OriginalFpsRadioButton.IsChecked = true;
@@ -122,6 +128,7 @@ public partial class MainWindow : Window
                     : (int)FrameRateMode.Fixed;
             Properties.Settings.Default.DefaultFps = GetFixedFps();
             Properties.Settings.Default.DefaultGpuMode = GpuModeComboBox.SelectedIndex;
+            Properties.Settings.Default.ProxyAddress = ProxyTextBox.Text.Trim();
             Properties.Settings.Default.Save();
         }
         catch (Exception ex)
@@ -340,6 +347,27 @@ public partial class MainWindow : Window
         _cts?.Cancel();
     }
 
+    private void ApplyProxyButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            string proxyAddress = ProxyTextBox.Text.Trim();
+            ProxyHelper.ApplyProxy(string.IsNullOrWhiteSpace(proxyAddress) ? null : proxyAddress);
+            Properties.Settings.Default.ProxyAddress = proxyAddress;
+            Properties.Settings.Default.Save();
+            MessageBox.Show(
+                string.IsNullOrWhiteSpace(proxyAddress) ? "已清除代理设置，使用系统默认网络配置。" : $"代理已设置为: {proxyAddress}",
+                "代理设置",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("代理设置失败", ex);
+            MessageBox.Show($"代理设置失败: {ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
     private async void BlurFacesButton_Click(object sender, RoutedEventArgs e)
     {
         if (_isExtracting || _isComposing)
@@ -360,6 +388,26 @@ public partial class MainWindow : Window
 
         try
         {
+            var missingFiles = FaceBlurService.GetMissingCascadeFileNames();
+            if (missingFiles.Count > 0)
+            {
+                string fileList = string.Join("\n", missingFiles.Select(f => $"  • {f}"));
+                var downloadResult = MessageBox.Show(
+                    $"人脸检测需要以下模型文件，当前缺失:\n{fileList}\n\n是否立即从网络下载？\n（需要网络连接，文件较小约几百KB）",
+                    "缺少人脸检测模型",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+
+                if (downloadResult != MessageBoxResult.Yes)
+                {
+                    BlurFacesButton.IsEnabled = true;
+                    StartButton.IsEnabled = true;
+                    return;
+                }
+
+                StatusTextBlock.Text = "正在下载人脸检测模型...";
+            }
+
             var progress = new Progress<string>(status => StatusTextBlock.Text = status);
             int modifiedCount = await _faceBlurService.BlurFacesInFolderAsync(targetFolder, progress);
 
