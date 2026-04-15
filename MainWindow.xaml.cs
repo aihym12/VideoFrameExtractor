@@ -69,6 +69,13 @@ public partial class MainWindow : Window
             AutoStartCheckBox.IsChecked = Properties.Settings.Default.AutoStart;
             OpenFolderCheckBox.IsChecked = Properties.Settings.Default.OpenFolderWhenDone;
             QualitySlider.Value = Properties.Settings.Default.DefaultQuality;
+            ProxyTextBox.Text = Properties.Settings.Default.ProxyAddress;
+
+            string savedProxy = ProxyTextBox.Text.Trim();
+            if (!string.IsNullOrWhiteSpace(savedProxy))
+            {
+                ProxyHelper.ApplyProxy(savedProxy);
+            }
 
             if (Properties.Settings.Default.DefaultFrameRateMode == (int)FrameRateMode.Original)
                 OriginalFpsRadioButton.IsChecked = true;
@@ -128,6 +135,7 @@ public partial class MainWindow : Window
                     : (int)FrameRateMode.Fixed;
             Properties.Settings.Default.DefaultFps = GetFixedFps();
             Properties.Settings.Default.DefaultGpuMode = GpuModeComboBox.SelectedIndex;
+            Properties.Settings.Default.ProxyAddress = ProxyTextBox.Text.Trim();
 
             // 保存人脸涂抹设置
             Properties.Settings.Default.FaceBlurMode = FaceBlurModeComboBox.SelectedIndex;
@@ -360,6 +368,27 @@ public partial class MainWindow : Window
     private void StopButton_Click(object sender, RoutedEventArgs e)
     {
         _cts?.Cancel();
+    }
+
+    private void ApplyProxyButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            string proxyAddress = ProxyTextBox.Text.Trim();
+            ProxyHelper.ApplyProxy(string.IsNullOrWhiteSpace(proxyAddress) ? null : proxyAddress);
+            Properties.Settings.Default.ProxyAddress = proxyAddress;
+            Properties.Settings.Default.Save();
+            MessageBox.Show(
+                string.IsNullOrWhiteSpace(proxyAddress) ? "已清除代理设置，使用系统默认网络配置。" : $"代理已设置为: {proxyAddress}",
+                "代理设置",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("代理设置失败", ex);
+            MessageBox.Show($"代理设置失败: {ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private async void BlurFacesButton_Click(object sender, RoutedEventArgs e)

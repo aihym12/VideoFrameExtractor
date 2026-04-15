@@ -42,6 +42,36 @@ public class FaceBlurService
     }
 
     /// <summary>
+    /// 眼睛检测最小像素尺寸下限
+    /// </summary>
+    private const int MinEyeSizePixels = 8;
+
+    /// <summary>
+    /// 眼睛宽度相对于脸部宽度的最大比例（过大的检测为误检）
+    /// </summary>
+    private const double MaxEyeWidthRatio = 0.5;
+
+    /// <summary>
+    /// 眼睛高度相对于脸部高度的最大比例
+    /// </summary>
+    private const double MaxEyeHeightRatio = 0.4;
+
+    /// <summary>
+    /// 眼睛宽度相对于脸部宽度的最小比例（过小的检测为误检）
+    /// </summary>
+    private const double MinEyeWidthRatio = 0.05;
+
+    /// <summary>
+    /// 从眼睛位置到脸部中心的垂直偏移比例（基于人脸比例，眼睛在脸部上方约35%处）
+    /// </summary>
+    private const double EyeToFaceCenterOffsetRatio = 0.15;
+
+    /// <summary>
+    /// 皮肤像素面积相对于脸部面积的最小比例，低于此值认为皮肤检测不可信
+    /// </summary>
+    private const double MinSkinAreaRatio = 0.05;
+
+    /// <summary>
     /// 对目录中的图片执行人脸检测并涂抹
     /// </summary>
     public async Task<int> BlurFacesInFolderAsync(
@@ -108,9 +138,11 @@ public class FaceBlurService
                         continue;
                     }
 
+                    var imageSize = image.Size();
                     foreach (Rect face in validatedFaces)
                     {
-                        ApplyFaceBlur(image, face, blurSettings);
+                        var refinedFace = RefineFaceRect(face, gray, image, eyeClassifier, imageSize);
+                        ApplyFaceBlur(image, refinedFace, blurSettings);
                     }
 
                     Cv2.ImWrite(file, image);
@@ -256,6 +288,138 @@ public class FaceBlurService
         double intersection = (x2 - x1) * (y2 - y1);
         double union = (a.Width * a.Height) + (b.Width * b.Height) - intersection;
         return union > 0 ? intersection / union : 0.0;
+    }
+
+    /// <summary>
+    /// 精细化人脸矩形位置：优先使用眼睛定位，其次使用皮肤颜色分析。
+    /// 解决侧脸检测时遮挡区域偏移到耳朵等非脸部区域的问题。
+    /// </summary>
+    private static Rect RefineFaceRect(Rect face, Mat gray, Mat colorImage, CascadeClassifier eyeClassifier, Size imageSize)
+    {
+        // 优先使用眼睛检测来精确定位脸部中心
+        Rect? eyeRefined = TryRefineFaceByEyes(face, gray, eyeClassifier, imageSize);
+        if (eyeRefined.HasValue)
+            return eyeRefined.Value;
+
+        // 没有检测到眼睛时，使用皮肤颜色质心来调整遮挡位置
+        return RefineFaceBySkinColor(face, colorImage, imageSize);
+    }
+
+    /// <summary>
+    /// 通过眼睛检测精细化人脸位置。
+    /// 在检测框的扩展区域内搜索眼睛，根据眼睛位置重新估算脸部中心。
+    /// </summary>
+    private static Rect? TryRefineFaceByEyes(Rect face, Mat gray, CascadeClassifier eyeClassifier, Size imageSize)
+    {
+        // 扩大搜索区域以覆盖检测框外可能遗漏的眼睛（侧脸时常见）
+        int expandX = face.Width / 2;
+        int expandY = face.Height / 4;
+        var searchArea = new Rect(
+            face.X - expandX,
+            face.Y - expandY,
+            face.Width + expandX * 2,
+            (int)(face.Height * 0.75) + expandY);
+        searchArea = ClampRect(searchArea, imageSize);
+
+        if (searchArea.Width <= 0 || searchArea.Height <= 0)
+            return null;
+
+        using var searchRoi = new Mat(gray, searchArea);
+        int minEyeSize = Math.Max(MinEyeSizePixels, face.Width / 10);
+        Rect[] eyes = eyeClassifier.DetectMultiScale(
+            searchRoi,
+            scaleFactor: 1.05,
+            minNeighbors: 2,
+            flags: HaarDetectionTypes.ScaleImage,
+            minSize: new Size(minEyeSize, minEyeSize));
+
+        if (eyes.Length == 0)
+            return null;
+
+        // 过滤掉不合理的眼睛检测（太大或太小的）
+        var validEyes = eyes.Where(e =>
+            e.Width < face.Width * MaxEyeWidthRatio &&
+            e.Height < face.Height * MaxEyeHeightRatio &&
+            e.Width > face.Width * MinEyeWidthRatio).ToArray();
+
+        if (validEyes.Length == 0)
+            return null;
+
+        // 计算眼睛中心的绝对坐标
+        double eyeCenterX = validEyes.Average(e => searchArea.X + e.X + e.Width / 2.0);
+        double eyeCenterY = validEyes.Average(e => searchArea.Y + e.Y + e.Height / 2.0);
+
+        // 眼睛大约在脸部上方35%处，据此估算脸部中心
+        int faceCenterX = (int)eyeCenterX;
+        int faceCenterY = (int)(eyeCenterY + face.Height * EyeToFaceCenterOffsetRatio);
+
+        var refined = new Rect(
+            faceCenterX - face.Width / 2,
+            faceCenterY - face.Height / 2,
+            face.Width,
+            face.Height);
+        return ClampRect(refined, imageSize);
+    }
+
+    /// <summary>
+    /// 通过皮肤颜色分析精细化人脸位置。
+    /// 在检测框周围扩展搜索，找到皮肤区域的质心作为脸部中心参考。
+    /// </summary>
+    private static Rect RefineFaceBySkinColor(Rect face, Mat colorImage, Size imageSize)
+    {
+        // 扩展搜索区域
+        int expandX = face.Width / 2;
+        int expandY = face.Height / 4;
+        var searchArea = new Rect(
+            face.X - expandX,
+            face.Y - expandY,
+            face.Width + expandX * 2,
+            face.Height + expandY * 2);
+        searchArea = ClampRect(searchArea, imageSize);
+
+        if (searchArea.Width <= 0 || searchArea.Height <= 0)
+            return face;
+
+        using var roi = new Mat(colorImage, searchArea);
+        using var hsv = new Mat();
+        Cv2.CvtColor(roi, hsv, ColorConversionCodes.BGR2HSV);
+
+        // 使用两个HSV范围覆盖不同肤色
+        using var skinMask1 = new Mat();
+        using var skinMask2 = new Mat();
+        using var skinMask = new Mat();
+        Cv2.InRange(hsv, new Scalar(0, 30, 60), new Scalar(25, 180, 255), skinMask1);
+        Cv2.InRange(hsv, new Scalar(160, 30, 60), new Scalar(180, 180, 255), skinMask2);
+        Cv2.BitwiseOr(skinMask1, skinMask2, skinMask);
+
+        // 形态学操作去除噪点
+        using var kernel = Cv2.GetStructuringElement(MorphShapes.Ellipse, new Size(5, 5));
+        Cv2.MorphologyEx(skinMask, skinMask, MorphTypes.Close, kernel);
+        Cv2.MorphologyEx(skinMask, skinMask, MorphTypes.Open, kernel);
+
+        var moments = Cv2.Moments(skinMask, true);
+        // 需要有足够的皮肤像素才认为结果可信
+        double minSkinArea = face.Width * face.Height * MinSkinAreaRatio;
+        if (moments.M00 > minSkinArea)
+        {
+            int skinCenterX = (int)(moments.M10 / moments.M00) + searchArea.X;
+            int skinCenterY = (int)(moments.M01 / moments.M00) + searchArea.Y;
+
+            // 使用加权平均：偏向皮肤质心但不完全脱离原始检测
+            int origCenterX = face.X + face.Width / 2;
+            int origCenterY = face.Y + face.Height / 2;
+            int newCenterX = (origCenterX + skinCenterX * 2) / 3;
+            int newCenterY = (origCenterY + skinCenterY * 2) / 3;
+
+            var refined = new Rect(
+                newCenterX - face.Width / 2,
+                newCenterY - face.Height / 2,
+                face.Width,
+                face.Height);
+            return ClampRect(refined, imageSize);
+        }
+
+        return face;
     }
 
     /// <summary>
