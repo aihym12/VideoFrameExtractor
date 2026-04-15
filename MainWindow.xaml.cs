@@ -71,9 +71,10 @@ public partial class MainWindow : Window
             QualitySlider.Value = Properties.Settings.Default.DefaultQuality;
             ProxyTextBox.Text = Properties.Settings.Default.ProxyAddress;
 
-            if (!string.IsNullOrWhiteSpace(ProxyTextBox.Text))
+            string savedProxy = ProxyTextBox.Text.Trim();
+            if (!string.IsNullOrWhiteSpace(savedProxy))
             {
-                ProxyHelper.ApplyProxy(ProxyTextBox.Text.Trim());
+                ProxyHelper.ApplyProxy(savedProxy);
             }
 
             if (Properties.Settings.Default.DefaultFrameRateMode == (int)FrameRateMode.Original)
