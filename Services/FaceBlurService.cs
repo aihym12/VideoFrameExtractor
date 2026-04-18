@@ -11,7 +11,7 @@ namespace VideoFrameExtractor.Services;
 public class FaceBlurService : IDisposable
 {
     /// <summary>掩膜有效像素占总像素的最低比例，低于此值视为无脸</summary>
-    private const double MinFaceMaskRatio = 0.001;
+    private const double MinFaceMaskRatio = FaceBlurConstants.MinFaceMaskRatio;
 
     /// <summary>软边缘羽化的高斯核尺寸</summary>
     private const int FeatherKernelSize = 21;

@@ -879,7 +879,9 @@ public partial class MainWindow : Window
                 _ => FaceDetectionSensitivity.Medium
             },
             AutoBlurAfterExtraction = AutoBlurAfterExtractionCheckBox.IsChecked == true,
-            InferenceDevice = OnnxDevice.Cpu  // 帧图片模式固定 CPU（快速批量）
+            // 图片批量涂抹标签页目前没有独立的设备选择器，固定使用 CPU。
+            // 视频涂抹 / 预览标签页各自有 CPU/GPU 选择器（BuildVideoBlurSettings / BuildPreviewBlurSettings）。
+            InferenceDevice = OnnxDevice.Cpu
         };
     }
 
@@ -1283,7 +1285,7 @@ public partial class MainWindow : Window
                 using var mask = parser.GetFaceMask(image, settings.Sensitivity);
                 int total = image.Rows * image.Cols;
                 int facePixels = OpenCvSharp.Cv2.CountNonZero(mask);
-                if (facePixels >= total * 0.001)
+                if (facePixels >= total * FaceBlurConstants.MinFaceMaskRatio)
                 {
                     // 直接用与 FaceBlurService 相同的软掩膜混合逻辑
                     using var soft = new OpenCvSharp.Mat();

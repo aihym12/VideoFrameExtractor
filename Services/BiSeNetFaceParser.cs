@@ -102,9 +102,11 @@ public sealed class BiSeNetFaceParser : IDisposable
             throw;
         }
 
-        // 下载成功后原子性地替换目标文件
-        if (File.Exists(ModelFilePath)) File.Delete(ModelFilePath);
-        File.Move(tmpPath, ModelFilePath);
+        // 下载成功后原子性地替换目标文件（File.Replace 在同分区上是原子操作）
+        if (File.Exists(ModelFilePath))
+            File.Replace(tmpPath, ModelFilePath, destinationBackupFileName: null);
+        else
+            File.Move(tmpPath, ModelFilePath);
     }
 
     // ── 构造 ─────────────────────────────────────────────────────────────────

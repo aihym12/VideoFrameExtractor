@@ -11,7 +11,7 @@ namespace VideoFrameExtractor.Services;
 /// </summary>
 public sealed class VideoFaceBlurService : IDisposable
 {
-    private const double MinFaceMaskRatio = 0.001;
+    private const double MinFaceMaskRatio = FaceBlurConstants.MinFaceMaskRatio;
     private const int FeatherKernelSize = 21;
     private const double FeatherSigma = 8.0;
 
@@ -46,8 +46,8 @@ public sealed class VideoFaceBlurService : IDisposable
         string outputDir = Path.GetDirectoryName(outputPath) ?? ".";
         Directory.CreateDirectory(outputDir);
 
-        // 临时无音频视频文件
-        string tempVideoPath = Path.Combine(outputDir, $"_tmp_blur_{Guid.NewGuid():N}.mp4");
+        // 临时无音频视频文件（放在系统 temp 目录，防止磁盘跨分区移动问题）
+        string tempVideoPath = Path.Combine(Path.GetTempPath(), $"vfe_blur_{Guid.NewGuid():N}.mp4");
 
         try
         {
@@ -58,14 +58,15 @@ public sealed class VideoFaceBlurService : IDisposable
             cancellationToken.ThrowIfCancellationRequested();
 
             // 2. 用 FFmpeg 把原始音频合并到输出视频
-            progress?.Report(new VideoBlurProgress(0, 0)); // 音频合并阶段
+            progress?.Report(new VideoBlurProgress(0, 0, "正在合并音频...")); // 音频合并阶段
             await MergeAudioAsync(inputPath, tempVideoPath, outputPath, cancellationToken);
         }
         finally
         {
             if (File.Exists(tempVideoPath))
             {
-                try { File.Delete(tempVideoPath); } catch { /* 忽略清理错误 */ }
+                try { File.Delete(tempVideoPath); }
+                catch (Exception ex) { Logger.Warn($"清理临时文件失败: {ex.Message}"); }
             }
         }
     }
