@@ -13,12 +13,6 @@ public class FaceBlurService : IDisposable
     /// <summary>掩膜有效像素占总像素的最低比例，低于此值视为无脸</summary>
     private const double MinFaceMaskRatio = FaceBlurConstants.MinFaceMaskRatio;
 
-    /// <summary>软边缘羽化的高斯核尺寸</summary>
-    private const int FeatherKernelSize = 21;
-
-    /// <summary>软边缘高斯 sigma</summary>
-    private const double FeatherSigma = 8.0;
-
     private BiSeNetFaceParser? _biSeNetParser;
     private OnnxDevice _currentDevice = OnnxDevice.Cpu;
     private bool _disposed;
@@ -119,105 +113,8 @@ public class FaceBlurService : IDisposable
     /// <summary>
     /// 根据二值掩膜对图像应用高斯模糊或马赛克，掩膜边缘带羽化过渡。
     /// </summary>
-    private static void ApplyFaceBlurByMask(Mat image, Mat mask, FaceBlurSettings settings)
-    {
-        // 生成软边缘 float 权重掩膜 [0, 1]，避免硬边
-        using var softMask = CreateSoftMask(mask);
-
-        if (settings.BlurMode == FaceBlurMode.Mosaic)
-            ApplyMosaicByMask(image, mask, softMask, settings.BlurStrength);
-        else
-            ApplyGaussianByMask(image, softMask, settings.BlurStrength);
-    }
-
-    /// <summary>高斯模糊：blended = blurred * alpha + original * (1 - alpha)</summary>
-    private static void ApplyGaussianByMask(Mat image, Mat softMask, int strength)
-    {
-        int minDim = Math.Min(image.Rows, image.Cols);
-        // 核大小随强度线性插值：strength=1 → ~5% 最短边，strength=100 → ~20% 最短边
-        int baseKernel = Math.Max(3, (int)(minDim * (0.05 + strength / 100.0 * 0.15)));
-        int kernel = baseKernel % 2 == 0 ? baseKernel + 1 : baseKernel; // 保证奇数
-
-        using var blurred = new Mat();
-        Cv2.GaussianBlur(image, blurred, new Size(kernel, kernel), 0);
-
-        BlendByMask(image, blurred, softMask);
-    }
-
-    /// <summary>马赛克：找掩膜包围盒内做像素化，再按掩膜合成</summary>
-    private static void ApplyMosaicByMask(Mat image, Mat binaryMask, Mat softMask, int strength)
-    {
-        // 找掩膜的包围盒
-        using var nonZeroPoints = new Mat();
-        Cv2.FindNonZero(binaryMask, nonZeroPoints);
-        if (nonZeroPoints.Total() == 0) return;
-        Rect bbox = Cv2.BoundingRect(nonZeroPoints);
-        bbox = ClampRect(bbox, image.Size());
-        if (bbox.Width <= 0 || bbox.Height <= 0) return;
-
-        int minFaceDim = Math.Min(bbox.Width, bbox.Height);
-        int blockSize = Math.Max(2, (int)(minFaceDim * (0.05 + strength / 100.0 * 0.25)));
-
-        // 在包围盒内创建马赛克效果
-        using var mosaicFull = image.Clone();
-        using var faceRoi = new Mat(image, bbox);
-        using var small = new Mat();
-        var smallSize = new Size(Math.Max(1, bbox.Width / blockSize), Math.Max(1, bbox.Height / blockSize));
-        Cv2.Resize(faceRoi, small, smallSize, interpolation: InterpolationFlags.Linear);
-        using var mosaic = new Mat();
-        Cv2.Resize(small, mosaic, new Size(bbox.Width, bbox.Height), interpolation: InterpolationFlags.Nearest);
-        mosaic.CopyTo(new Mat(mosaicFull, bbox));
-
-        BlendByMask(image, mosaicFull, softMask);
-    }
-
-    /// <summary>
-    /// 按 softMask 软权重混合：dst = effect * alpha + original * (1 - alpha)
-    /// 结果写回 image。
-    /// </summary>
-    private static void BlendByMask(Mat image, Mat effect, Mat softMask)
-    {
-        // 扩展 softMask 到 3 通道 float
-        using var softMask3 = new Mat();
-        Cv2.Merge([softMask, softMask, softMask], softMask3);
-
-        using var imageF = new Mat();
-        using var effectF = new Mat();
-        image.ConvertTo(imageF, MatType.CV_32FC3);
-        effect.ConvertTo(effectF, MatType.CV_32FC3);
-
-        // diff = effect - original
-        using var diff = new Mat();
-        Cv2.Subtract(effectF, imageF, diff);
-
-        // blended = original + diff * alpha
-        using var blended = new Mat();
-        Cv2.Multiply(diff, softMask3, blended);
-        Cv2.Add(imageF, blended, blended);
-        blended.ConvertTo(image, MatType.CV_8UC3);
-    }
-
-    /// <summary>
-    /// 将二值掩膜转换为 [0, 1] 范围的单通道 float 软边缘掩膜。
-    /// 通过高斯模糊使边缘过渡自然。
-    /// </summary>
-    private static Mat CreateSoftMask(Mat binaryMask)
-    {
-        var soft = new Mat();
-        binaryMask.ConvertTo(soft, MatType.CV_32F, 1.0 / 255.0);
-        Cv2.GaussianBlur(soft, soft, new Size(FeatherKernelSize, FeatherKernelSize), FeatherSigma);
-        return soft;
-    }
-
-    /// <summary>将矩形裁剪到图像边界内</summary>
-    private static Rect ClampRect(Rect rect, Size imageSize)
-    {
-        int x = Math.Max(0, rect.X);
-        int y = Math.Max(0, rect.Y);
-        int right = Math.Min(imageSize.Width, rect.X + rect.Width);
-        int bottom = Math.Min(imageSize.Height, rect.Y + rect.Height);
-        return new Rect(x, y, Math.Max(0, right - x), Math.Max(0, bottom - y));
-    }
+    private static void ApplyFaceBlurByMask(Mat image, Mat mask, FaceBlurSettings settings) =>
+        FaceBlurHelper.ApplyFaceBlurByMask(image, mask, settings);
 
     // ── IDisposable ──────────────────────────────────────────────────────────
 

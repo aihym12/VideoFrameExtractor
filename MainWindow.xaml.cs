@@ -1286,45 +1286,7 @@ public partial class MainWindow : Window
                 int total = image.Rows * image.Cols;
                 int facePixels = OpenCvSharp.Cv2.CountNonZero(mask);
                 if (facePixels >= total * FaceBlurConstants.MinFaceMaskRatio)
-                {
-                    // 直接用与 FaceBlurService 相同的软掩膜混合逻辑
-                    using var soft = new OpenCvSharp.Mat();
-                    mask.ConvertTo(soft, OpenCvSharp.MatType.CV_32F, 1.0 / 255.0);
-                    OpenCvSharp.Cv2.GaussianBlur(soft, soft, new OpenCvSharp.Size(21, 21), 8.0);
-
-                    if (settings.BlurMode == FaceBlurMode.Mosaic)
-                    {
-                        using var pts = new OpenCvSharp.Mat();
-                        OpenCvSharp.Cv2.FindNonZero(mask, pts);
-                        if (pts.Total() > 0)
-                        {
-                            var bbox = OpenCvSharp.Cv2.BoundingRect(pts);
-                            int minDim = Math.Min(bbox.Width, bbox.Height);
-                            int block = Math.Max(2, (int)(minDim * (0.05 + settings.BlurStrength / 100.0 * 0.25)));
-                            using var mosaicFull = image.Clone();
-                            using var roi = new OpenCvSharp.Mat(image, bbox);
-                            using var small = new OpenCvSharp.Mat();
-                            OpenCvSharp.Cv2.Resize(roi, small,
-                                new OpenCvSharp.Size(Math.Max(1, bbox.Width / block), Math.Max(1, bbox.Height / block)),
-                                interpolation: OpenCvSharp.InterpolationFlags.Linear);
-                            using var mos = new OpenCvSharp.Mat();
-                            OpenCvSharp.Cv2.Resize(small, mos,
-                                new OpenCvSharp.Size(bbox.Width, bbox.Height),
-                                interpolation: OpenCvSharp.InterpolationFlags.Nearest);
-                            mos.CopyTo(new OpenCvSharp.Mat(mosaicFull, bbox));
-                            BlendPreview(image, mosaicFull, soft);
-                        }
-                    }
-                    else
-                    {
-                        int minDim2 = Math.Min(image.Rows, image.Cols);
-                        int kBase = Math.Max(3, (int)(minDim2 * (0.05 + settings.BlurStrength / 100.0 * 0.15)));
-                        int k = kBase % 2 == 0 ? kBase + 1 : kBase;
-                        using var blurred2 = new OpenCvSharp.Mat();
-                        OpenCvSharp.Cv2.GaussianBlur(image, blurred2, new OpenCvSharp.Size(k, k), 0);
-                        BlendPreview(image, blurred2, soft);
-                    }
-                }
+                    VideoFrameExtractor.Services.FaceBlurHelper.ApplyFaceBlurByMask(image, mask, settings);
 
                 OpenCvSharp.Cv2.ImEncode(".png", image, out byte[] buf);
                 return buf;
@@ -1349,21 +1311,5 @@ public partial class MainWindow : Window
         {
             PreviewRunButton.IsEnabled = true;
         }
-    }
-
-    private static void BlendPreview(OpenCvSharp.Mat image, OpenCvSharp.Mat effect, OpenCvSharp.Mat soft)
-    {
-        using var soft3 = new OpenCvSharp.Mat();
-        OpenCvSharp.Cv2.Merge([soft, soft, soft], soft3);
-        using var imgF = new OpenCvSharp.Mat();
-        using var effF = new OpenCvSharp.Mat();
-        image.ConvertTo(imgF, OpenCvSharp.MatType.CV_32FC3);
-        effect.ConvertTo(effF, OpenCvSharp.MatType.CV_32FC3);
-        using var diff = new OpenCvSharp.Mat();
-        OpenCvSharp.Cv2.Subtract(effF, imgF, diff);
-        using var blended = new OpenCvSharp.Mat();
-        OpenCvSharp.Cv2.Multiply(diff, soft3, blended);
-        OpenCvSharp.Cv2.Add(imgF, blended, blended);
-        blended.ConvertTo(image, OpenCvSharp.MatType.CV_8UC3);
     }
 }
