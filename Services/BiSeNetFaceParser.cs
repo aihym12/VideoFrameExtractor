@@ -25,9 +25,18 @@ public sealed class BiSeNetFaceParser : IDisposable
     // ── 模型配置 ────────────────────────────────────────────────────────────
     public const string ModelFileName = "face_parsing_bisenet.onnx";
 
-    // facefusion 开源发布的 BiSeNet face-parser (同 face-parsing.PyTorch 格式, 19 类)
-    public const string ModelDownloadUrl =
-        "https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/face_parser.onnx";
+    // BiSeNet face-parser 下载源（同 face-parsing.PyTorch 格式，19 类，约 50MB）。
+    // 按顺序尝试，任一成功即可。facefusion 在 models-3.1.0 起将原 face_parser.onnx
+    // 更名为 bisenet_resnet_18.onnx；models-3.0.0 的旧链接已 404，因此优先使用新链接。
+    public static readonly IReadOnlyList<string> ModelDownloadUrls = new[]
+    {
+        "https://github.com/facefusion/facefusion-assets/releases/download/models-3.1.0/bisenet_resnet_18.onnx",
+        "https://github.com/yakhyo/face-parsing/releases/latest/download/resnet18.onnx",
+        "https://huggingface.co/bluefoxcreation/Face_parsing_onnx/resolve/main/faceparser.onnx",
+    };
+
+    /// <summary>主下载地址（保留以兼容旧调用方；实际下载会遍历 <see cref="ModelDownloadUrls"/>）。</summary>
+    public static string ModelDownloadUrl => ModelDownloadUrls[0];
 
     private const int InputSize = 512;
     private const int NumClasses = 19;
@@ -67,43 +76,62 @@ public sealed class BiSeNetFaceParser : IDisposable
         Directory.CreateDirectory(dir);
 
         string tmpPath = ModelFilePath + ".tmp";
-        try
+        List<string> failures = new();
+
+        for (int i = 0; i < ModelDownloadUrls.Count; i++)
         {
-            // 先获取文件大小（可选）
-            using var response = await _httpClient.GetAsync(ModelDownloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            response.EnsureSuccessStatusCode();
-            long? totalBytes = response.Content.Headers.ContentLength;
-
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            await using var fileStream = new FileStream(tmpPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true);
-
-            byte[] buffer = new byte[81920];
-            long downloaded = 0;
-            int read;
-            while ((read = await stream.ReadAsync(buffer, cancellationToken)) > 0)
+            string url = ModelDownloadUrls[i];
+            try
             {
-                await fileStream.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
-                downloaded += read;
-                if (totalBytes.HasValue)
+                progress?.Report($"正在从镜像 {i + 1}/{ModelDownloadUrls.Count} 下载 BiSeNet 模型...");
+
+                using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                response.EnsureSuccessStatusCode();
+                long? totalBytes = response.Content.Headers.ContentLength;
+
+                await using (var stream = await response.Content.ReadAsStreamAsync(cancellationToken))
+                await using (var fileStream = new FileStream(tmpPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true))
                 {
-                    int pct = (int)(downloaded * 100 / totalBytes.Value);
-                    progress?.Report($"正在下载 BiSeNet 模型... {pct}% ({downloaded / 1_048_576}MB / {totalBytes.Value / 1_048_576}MB)");
+                    byte[] buffer = new byte[81920];
+                    long downloaded = 0;
+                    int read;
+                    while ((read = await stream.ReadAsync(buffer, cancellationToken)) > 0)
+                    {
+                        await fileStream.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                        downloaded += read;
+                        if (totalBytes.HasValue)
+                        {
+                            int pct = (int)(downloaded * 100 / totalBytes.Value);
+                            progress?.Report($"正在下载 BiSeNet 模型... {pct}% ({downloaded / 1_048_576}MB / {totalBytes.Value / 1_048_576}MB)");
+                        }
+                        else
+                        {
+                            progress?.Report($"正在下载 BiSeNet 模型... {downloaded / 1_048_576}MB 已下载");
+                        }
+                    }
                 }
-                else
-                {
-                    progress?.Report($"正在下载 BiSeNet 模型... {downloaded / 1_048_576}MB 已下载");
-                }
+
+                // 下载成功后原子性地替换目标文件
+                File.Move(tmpPath, ModelFilePath, overwrite: true);
+                return;
+            }
+            catch (OperationCanceledException)
+            {
+                if (File.Exists(tmpPath)) File.Delete(tmpPath);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                if (File.Exists(tmpPath)) File.Delete(tmpPath);
+                failures.Add($"[{url}] {ex.Message}");
+                Logger.Warn($"BiSeNet 模型下载失败（镜像 {i + 1}/{ModelDownloadUrls.Count}）：{ex.Message}");
+                // 继续尝试下一个镜像
             }
         }
-        catch
-        {
-            // 下载失败时清理临时文件
-            if (File.Exists(tmpPath)) File.Delete(tmpPath);
-            throw;
-        }
 
-        // 下载成功后原子性地替换目标文件
-        File.Move(tmpPath, ModelFilePath, overwrite: true);
+        throw new HttpRequestException(
+            "所有 BiSeNet 模型下载镜像均不可用。请检查网络连接，或手动下载模型文件并放入 models/ 目录。\n" +
+            string.Join("\n", failures));
     }
 
     // ── 构造 ─────────────────────────────────────────────────────────────────
