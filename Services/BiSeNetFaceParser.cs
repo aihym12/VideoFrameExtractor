@@ -45,6 +45,9 @@ public sealed class BiSeNetFaceParser : IDisposable
     private readonly InferenceSession _session;
     private bool _disposed;
 
+    // ── 静态 HttpClient（避免 socket 耗尽） ──────────────────────────────────
+    private static readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromMinutes(10) };
+
     // ── 静态辅助 ─────────────────────────────────────────────────────────────
 
     /// <summary>模型文件的完整路径</summary>
@@ -65,10 +68,8 @@ public sealed class BiSeNetFaceParser : IDisposable
         string tmpPath = ModelFilePath + ".tmp";
         try
         {
-            using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
-
             // 先获取文件大小（可选）
-            using var response = await client.GetAsync(ModelDownloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            using var response = await _httpClient.GetAsync(ModelDownloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             response.EnsureSuccessStatusCode();
             long? totalBytes = response.Content.Headers.ContentLength;
 
@@ -224,10 +225,6 @@ public sealed class BiSeNetFaceParser : IDisposable
             Marshal.Copy(ch.Data, tmp, 0, hw);
             tmp.AsSpan().CopyTo(tData.Slice(offset, hw));
         }
-
-        // 释放未在 foreach 中释放的通道引用（已 using，此处防止 GC 分析误报）
-        foreach (var ch in channels)
-            ch.Dispose();
 
         return tensor;
     }

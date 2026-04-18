@@ -19,7 +19,7 @@ public class FaceBlurService : IDisposable
     /// <summary>软边缘高斯 sigma</summary>
     private const double FeatherSigma = 8.0;
 
-    private BiSeNetFaceParser? _parser;
+    private BiSeNetFaceParser? _biSeNetParser;
     private bool _disposed;
 
     // ── 静态辅助（供 MainWindow 查询缺失文件） ───────────────────────────────
@@ -53,7 +53,7 @@ public class FaceBlurService : IDisposable
             throw new DirectoryNotFoundException("目标图片目录不存在。");
 
         // 初始化解析器（单例，重用 ONNX Session）
-        _parser ??= new BiSeNetFaceParser();
+        _biSeNetParser ??= new BiSeNetFaceParser();
 
         return await Task.Run(() =>
         {
@@ -80,7 +80,7 @@ public class FaceBlurService : IDisposable
                         continue;
 
                     // 获取脸型二值掩膜（255=脸部，0=非脸部）
-                    using var mask = _parser.GetFaceMask(image, blurSettings.Sensitivity);
+                    using var mask = _biSeNetParser.GetFaceMask(image, blurSettings.Sensitivity);
 
                     // 检查掩膜中脸部像素是否足够多
                     int totalPixels = image.Rows * image.Cols;
@@ -219,7 +219,7 @@ public class FaceBlurService : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        _parser?.Dispose();
-        _parser = null;
+        _biSeNetParser?.Dispose();
+        _biSeNetParser = null;
     }
 }
