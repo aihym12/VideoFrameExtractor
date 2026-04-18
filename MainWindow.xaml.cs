@@ -329,9 +329,27 @@ public partial class MainWindow : Window
                 // 抽帧完成后自动执行人脸涂抹
                 if (AutoBlurAfterExtractionCheckBox.IsChecked == true)
                 {
-                    var blurSettings = BuildFaceBlurSettings();
-                    var blurProgress = new Progress<string>(status => StatusTextBlock.Text = status);
-                    await _faceBlurService.BlurFacesInFolderAsync(result.OutputFolder, blurSettings, blurProgress, _cts.Token);
+                    // 确保 BiSeNet 模型存在（若缺失则提示下载）
+                    if (!BiSeNetFaceParser.IsModelPresent())
+                    {
+                        var dlResult = MessageBox.Show(
+                            $"人脸分割需要 BiSeNet 模型文件（{BiSeNetFaceParser.ModelFileName}），当前缺失。\n\n是否立即从网络下载？（约 50MB）",
+                            "缺少 BiSeNet 人脸分割模型",
+                            MessageBoxButton.YesNo,
+                            MessageBoxImage.Question);
+                        if (dlResult == MessageBoxResult.Yes)
+                        {
+                            var dlProgress = new Progress<string>(s => StatusTextBlock.Text = s);
+                            await BiSeNetFaceParser.DownloadModelAsync(dlProgress, _cts.Token);
+                        }
+                    }
+
+                    if (BiSeNetFaceParser.IsModelPresent())
+                    {
+                        var blurSettings = BuildFaceBlurSettings();
+                        var blurProgress = new Progress<string>(status => StatusTextBlock.Text = status);
+                        await _faceBlurService.BlurFacesInFolderAsync(result.OutputFolder, blurSettings, blurProgress, _cts.Token);
+                    }
                 }
 
                 await LoadPreviewAsync(result.OutputFolder, settings.Format);
@@ -411,13 +429,13 @@ public partial class MainWindow : Window
 
         try
         {
-            var missingFiles = FaceBlurService.GetMissingCascadeFileNames();
+            var missingFiles = FaceBlurService.GetMissingModelFileNames();
             if (missingFiles.Count > 0)
             {
                 string fileList = string.Join("\n", missingFiles.Select(f => $"  • {f}"));
                 var downloadResult = MessageBox.Show(
-                    $"人脸检测需要以下模型文件，当前缺失:\n{fileList}\n\n是否立即从网络下载？\n（需要网络连接，文件较小约几百KB）",
-                    "缺少人脸检测模型",
+                    $"人脸分割需要以下 BiSeNet 模型文件，当前缺失:\n{fileList}\n\n是否立即从网络下载？\n（约 50MB，下载完成后自动开始处理）",
+                    "缺少 BiSeNet 人脸分割模型",
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Question);
 
@@ -428,7 +446,10 @@ public partial class MainWindow : Window
                     return;
                 }
 
-                StatusTextBlock.Text = "正在下载人脸检测模型...";
+                var downloadProgress = new Progress<string>(status => StatusTextBlock.Text = status);
+                StatusTextBlock.Text = "正在下载 BiSeNet 人脸分割模型...";
+                await BiSeNetFaceParser.DownloadModelAsync(downloadProgress);
+                StatusTextBlock.Text = "模型下载完成，开始处理...";
             }
 
             var blurSettings = BuildFaceBlurSettings();
