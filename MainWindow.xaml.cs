@@ -24,14 +24,20 @@ public partial class MainWindow : Window
     private readonly FrameExtractor _frameExtractor = new();
     private readonly ImageSequenceComposer _imageSequenceComposer = new();
     private readonly FaceBlurService _faceBlurService = new();
+    private readonly VideoFaceBlurService _videoFaceBlurService = new();
     private readonly ObservableCollection<BitmapImage> _previewImages = [];
 
     private CancellationTokenSource? _cts;
+    private CancellationTokenSource? _videoBlurCts;
     private VideoInfo? _currentVideoInfo;
     private readonly List<string> _pendingFiles = [];
     private bool _isExtracting;
     private bool _isComposing;
+    private bool _isVideoBlurring;
+
     private string? _lastOutputFolder;
+    private string? _videoBlurSourcePath;
+    private string? _previewImagePath;
 
     public MainWindow()
     {
@@ -56,8 +62,10 @@ public partial class MainWindow : Window
 
     private void UpdateTabSpecificUi()
     {
-        bool isComposeTab = MainTabControl.SelectedIndex == 1;
-        ExtractBottomBar.Visibility = isComposeTab ? Visibility.Collapsed : Visibility.Visible;
+        // 底部进度栏仅在"视频抽帧"标签页（0）显示
+        ExtractBottomBar.Visibility = MainTabControl.SelectedIndex == 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 
     private void LoadSettings()
@@ -110,6 +118,11 @@ public partial class MainWindow : Window
             FaceBlurStrengthSlider.Value = Math.Clamp(Properties.Settings.Default.FaceBlurStrength, 1, 100);
             FaceDetectionSensitivityComboBox.SelectedIndex = Math.Clamp(Properties.Settings.Default.FaceDetectionSensitivity, 0, 2);
             AutoBlurAfterExtractionCheckBox.IsChecked = Properties.Settings.Default.AutoBlurAfterExtraction;
+
+            // 加载推理设备设置（视频涂抹 + 预览共用）
+            int savedDevice = Math.Clamp(Properties.Settings.Default.OnnxInferenceDevice, 0, 1);
+            VideoBlurDeviceComboBox.SelectedIndex = savedDevice;
+            PreviewDeviceComboBox.SelectedIndex = savedDevice;
         }
         catch (Exception ex)
         {
@@ -142,6 +155,7 @@ public partial class MainWindow : Window
             Properties.Settings.Default.FaceBlurStrength = (int)FaceBlurStrengthSlider.Value;
             Properties.Settings.Default.FaceDetectionSensitivity = FaceDetectionSensitivityComboBox.SelectedIndex;
             Properties.Settings.Default.AutoBlurAfterExtraction = AutoBlurAfterExtractionCheckBox.IsChecked == true;
+            Properties.Settings.Default.OnnxInferenceDevice = VideoBlurDeviceComboBox.SelectedIndex;
 
             Properties.Settings.Default.Save();
         }
@@ -864,7 +878,39 @@ public partial class MainWindow : Window
                 2 => FaceDetectionSensitivity.High,
                 _ => FaceDetectionSensitivity.Medium
             },
-            AutoBlurAfterExtraction = AutoBlurAfterExtractionCheckBox.IsChecked == true
+            AutoBlurAfterExtraction = AutoBlurAfterExtractionCheckBox.IsChecked == true,
+            InferenceDevice = OnnxDevice.Cpu  // 帧图片模式固定 CPU（快速批量）
+        };
+    }
+
+    private FaceBlurSettings BuildVideoBlurSettings()
+    {
+        return new FaceBlurSettings
+        {
+            BlurMode = VideoBlurModeComboBox.SelectedIndex == 1 ? FaceBlurMode.Mosaic : FaceBlurMode.Gaussian,
+            BlurStrength = (int)VideoBlurStrengthSlider.Value,
+            Sensitivity = VideoBlurSensitivityComboBox.SelectedIndex switch
+            {
+                0 => FaceDetectionSensitivity.Low,
+                2 => FaceDetectionSensitivity.High,
+                _ => FaceDetectionSensitivity.Medium
+            },
+            InferenceDevice = VideoBlurDeviceComboBox.SelectedIndex == 1
+                ? OnnxDevice.DirectML
+                : OnnxDevice.Cpu
+        };
+    }
+
+    private FaceBlurSettings BuildPreviewBlurSettings()
+    {
+        return new FaceBlurSettings
+        {
+            BlurMode = PreviewBlurModeComboBox.SelectedIndex == 1 ? FaceBlurMode.Mosaic : FaceBlurMode.Gaussian,
+            BlurStrength = (int)PreviewBlurStrengthSlider.Value,
+            Sensitivity = FaceDetectionSensitivity.Medium,
+            InferenceDevice = PreviewDeviceComboBox.SelectedIndex == 1
+                ? OnnxDevice.DirectML
+                : OnnxDevice.Cpu
         };
     }
 
@@ -947,6 +993,375 @@ public partial class MainWindow : Window
     {
         SaveSettings();
         _cts?.Dispose();
+        _videoBlurCts?.Dispose();
+        _videoFaceBlurService.Dispose();
+        _faceBlurService.Dispose();
         base.OnClosed(e);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Tab 3：视频人脸涂抹
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private void VideoBlurDropZone_DragEnter(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            e.Effects = DragDropEffects.Copy;
+            VideoBlurDropZoneBorder.BorderBrush = Brushes.DodgerBlue;
+        }
+        else
+        {
+            e.Effects = DragDropEffects.None;
+        }
+        e.Handled = true;
+    }
+
+    private void VideoBlurDropZone_DragLeave(object sender, DragEventArgs e)
+    {
+        VideoBlurDropZoneBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(0xBD, 0xBD, 0xBD));
+    }
+
+    private void VideoBlurDropZone_Drop(object sender, DragEventArgs e)
+    {
+        VideoBlurDropZoneBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(0xBD, 0xBD, 0xBD));
+        if (e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            string[] files = (string[])e.Data.GetData(DataFormats.FileDrop);
+            if (files.Length > 0)
+                LoadVideoBlurSource(files[0]);
+        }
+    }
+
+    private void VideoBlurDropZone_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount != 2) return;
+        var dialog = new OpenFileDialog
+        {
+            Title = "选择源视频",
+            Filter = "视频文件|*.mp4;*.avi;*.mov;*.mkv;*.wmv;*.flv;*.webm|所有文件|*.*"
+        };
+        if (dialog.ShowDialog() == true)
+            LoadVideoBlurSource(dialog.FileName);
+    }
+
+    private void LoadVideoBlurSource(string path)
+    {
+        if (!File.Exists(path)) return;
+        _videoBlurSourcePath = path;
+        VideoBlurSourceInfoTextBlock.Text = Path.GetFileName(path);
+
+        // 自动填充输出路径
+        if (string.IsNullOrWhiteSpace(VideoBlurOutputPathTextBox.Text))
+        {
+            string dir = Path.GetDirectoryName(path) ?? ".";
+            string name = Path.GetFileNameWithoutExtension(path);
+            string ext = Path.GetExtension(path);
+            VideoBlurOutputPathTextBox.Text = Path.Combine(dir, name + "_blurred" + ext);
+        }
+    }
+
+    private void VideoBlurBrowseOutputButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Title = "选择输出视频路径",
+            Filter = "MP4 视频|*.mp4|所有文件|*.*",
+            FileName = string.IsNullOrWhiteSpace(VideoBlurOutputPathTextBox.Text)
+                ? "output_blurred.mp4"
+                : Path.GetFileName(VideoBlurOutputPathTextBox.Text)
+        };
+        if (!string.IsNullOrWhiteSpace(VideoBlurOutputPathTextBox.Text))
+            dialog.InitialDirectory = Path.GetDirectoryName(VideoBlurOutputPathTextBox.Text);
+        if (dialog.ShowDialog() == true)
+            VideoBlurOutputPathTextBox.Text = dialog.FileName;
+    }
+
+    private void VideoBlurStrengthSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (!IsLoaded) return;
+        VideoBlurStrengthValueTextBlock.Text = ((int)e.NewValue).ToString(CultureInfo.InvariantCulture);
+    }
+
+    private async void VideoBlurStartButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isVideoBlurring) return;
+        if (string.IsNullOrWhiteSpace(_videoBlurSourcePath) || !File.Exists(_videoBlurSourcePath))
+        {
+            MessageBox.Show("请先选择源视频文件。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        string outputPath = VideoBlurOutputPathTextBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(outputPath))
+        {
+            MessageBox.Show("请指定输出视频路径。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        // 确保模型存在
+        if (!BiSeNetFaceParser.IsModelPresent())
+        {
+            var dlResult = MessageBox.Show(
+                $"人脸分割需要 BiSeNet 模型文件（{BiSeNetFaceParser.ModelFileName}），当前缺失。\n\n是否立即从网络下载？（约 50MB）",
+                "缺少 BiSeNet 人脸分割模型",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (dlResult != MessageBoxResult.Yes) return;
+
+            VideoBlurStatusTextBlock.Text = "正在下载 BiSeNet 模型...";
+            try
+            {
+                var dlProg = new Progress<string>(s => VideoBlurStatusTextBlock.Text = s);
+                await BiSeNetFaceParser.DownloadModelAsync(dlProg);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"模型下载失败: {ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+        }
+
+        _isVideoBlurring = true;
+        VideoBlurStartButton.IsEnabled = false;
+        VideoBlurStopButton.IsEnabled = true;
+        VideoBlurProgressBar.Value = 0;
+        VideoBlurDropZoneBorder.IsHitTestVisible = false;
+
+        _videoBlurCts = new CancellationTokenSource();
+
+        try
+        {
+            var settings = BuildVideoBlurSettings();
+            var progressHandler = new Progress<VideoBlurProgress>(p =>
+            {
+                VideoBlurStatusTextBlock.Text = p.TotalFrames > 0
+                    ? p.ToString()
+                    : "正在合并音频...";
+                if (p.Percentage >= 0)
+                    VideoBlurProgressBar.Value = p.Percentage;
+            });
+
+            VideoBlurStatusTextBlock.Text = "正在初始化...";
+            await _videoFaceBlurService.BlurVideoAsync(
+                _videoBlurSourcePath,
+                outputPath,
+                settings,
+                progressHandler,
+                _videoBlurCts.Token);
+
+            VideoBlurProgressBar.Value = 100;
+            VideoBlurStatusTextBlock.Text = "视频涂抹完成！";
+            MessageBox.Show($"视频人脸涂抹完成！\n输出：{outputPath}",
+                "完成", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (OperationCanceledException)
+        {
+            VideoBlurStatusTextBlock.Text = "已取消";
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("视频人脸涂抹失败", ex);
+            VideoBlurStatusTextBlock.Text = "涂抹失败";
+            MessageBox.Show($"视频人脸涂抹失败: {ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            _isVideoBlurring = false;
+            VideoBlurStartButton.IsEnabled = true;
+            VideoBlurStopButton.IsEnabled = false;
+            VideoBlurDropZoneBorder.IsHitTestVisible = true;
+            _videoBlurCts?.Dispose();
+            _videoBlurCts = null;
+        }
+    }
+
+    private void VideoBlurStopButton_Click(object sender, RoutedEventArgs e)
+    {
+        _videoBlurCts?.Cancel();
+        VideoBlurStatusTextBlock.Text = "正在停止...";
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Tab 4：涂抹预览
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private void PreviewBrowseImageButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "选择图片",
+            Filter = "图片文件|*.jpg;*.jpeg;*.png;*.bmp|所有文件|*.*"
+        };
+        if (dialog.ShowDialog() == true)
+            LoadPreviewImage(dialog.FileName);
+    }
+
+    private void PreviewOriginalImage_Drop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            string[] files = (string[])e.Data.GetData(DataFormats.FileDrop);
+            if (files.Length > 0)
+                LoadPreviewImage(files[0]);
+        }
+    }
+
+    private void LoadPreviewImage(string path)
+    {
+        if (!File.Exists(path)) return;
+        _previewImagePath = path;
+        PreviewImagePathTextBox.Text = path;
+
+        try
+        {
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.UriSource = new Uri(path);
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.EndInit();
+            bmp.Freeze();
+            PreviewOriginalImage.Source = bmp;
+            PreviewBlurredImage.Source = null;
+            PreviewStatusTextBlock.Text = "已加载图片，点击\"生成预览\"";
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"加载预览图片失败: {ex.Message}");
+        }
+    }
+
+    private void PreviewBlurStrengthSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (!IsLoaded) return;
+        PreviewBlurStrengthValueTextBlock.Text = ((int)e.NewValue).ToString(CultureInfo.InvariantCulture);
+    }
+
+    private async void PreviewRunButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_previewImagePath) || !File.Exists(_previewImagePath))
+        {
+            MessageBox.Show("请先选择或拖入图片文件。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        // 确保模型存在
+        if (!BiSeNetFaceParser.IsModelPresent())
+        {
+            var dlResult = MessageBox.Show(
+                $"人脸分割需要 BiSeNet 模型文件（{BiSeNetFaceParser.ModelFileName}），当前缺失。\n\n是否立即从网络下载？（约 50MB）",
+                "缺少 BiSeNet 人脸分割模型",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (dlResult != MessageBoxResult.Yes) return;
+
+            PreviewStatusTextBlock.Text = "正在下载模型...";
+            try
+            {
+                var dlProg = new Progress<string>(s => PreviewStatusTextBlock.Text = s);
+                await BiSeNetFaceParser.DownloadModelAsync(dlProg);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"模型下载失败: {ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+        }
+
+        PreviewRunButton.IsEnabled = false;
+        PreviewStatusTextBlock.Text = "正在推理...";
+
+        try
+        {
+            var settings = BuildPreviewBlurSettings();
+            var blurredSource = await Task.Run(() =>
+            {
+                using var parser = new BiSeNetFaceParser(settings.InferenceDevice);
+                using var image = OpenCvSharp.Cv2.ImRead(_previewImagePath, OpenCvSharp.ImreadModes.Color);
+                if (image.Empty()) throw new InvalidOperationException("图片读取失败。");
+
+                using var mask = parser.GetFaceMask(image, settings.Sensitivity);
+                int total = image.Rows * image.Cols;
+                int facePixels = OpenCvSharp.Cv2.CountNonZero(mask);
+                if (facePixels >= total * 0.001)
+                {
+                    // 直接用与 FaceBlurService 相同的软掩膜混合逻辑
+                    using var soft = new OpenCvSharp.Mat();
+                    mask.ConvertTo(soft, OpenCvSharp.MatType.CV_32F, 1.0 / 255.0);
+                    OpenCvSharp.Cv2.GaussianBlur(soft, soft, new OpenCvSharp.Size(21, 21), 8.0);
+
+                    if (settings.BlurMode == FaceBlurMode.Mosaic)
+                    {
+                        using var pts = new OpenCvSharp.Mat();
+                        OpenCvSharp.Cv2.FindNonZero(mask, pts);
+                        if (pts.Total() > 0)
+                        {
+                            var bbox = OpenCvSharp.Cv2.BoundingRect(pts);
+                            int minDim = Math.Min(bbox.Width, bbox.Height);
+                            int block = Math.Max(2, (int)(minDim * (0.05 + settings.BlurStrength / 100.0 * 0.25)));
+                            using var mosaicFull = image.Clone();
+                            using var roi = new OpenCvSharp.Mat(image, bbox);
+                            using var small = new OpenCvSharp.Mat();
+                            OpenCvSharp.Cv2.Resize(roi, small,
+                                new OpenCvSharp.Size(Math.Max(1, bbox.Width / block), Math.Max(1, bbox.Height / block)),
+                                interpolation: OpenCvSharp.InterpolationFlags.Linear);
+                            using var mos = new OpenCvSharp.Mat();
+                            OpenCvSharp.Cv2.Resize(small, mos,
+                                new OpenCvSharp.Size(bbox.Width, bbox.Height),
+                                interpolation: OpenCvSharp.InterpolationFlags.Nearest);
+                            mos.CopyTo(new OpenCvSharp.Mat(mosaicFull, bbox));
+                            BlendPreview(image, mosaicFull, soft);
+                        }
+                    }
+                    else
+                    {
+                        int minDim2 = Math.Min(image.Rows, image.Cols);
+                        int kBase = Math.Max(3, (int)(minDim2 * (0.05 + settings.BlurStrength / 100.0 * 0.15)));
+                        int k = kBase % 2 == 0 ? kBase + 1 : kBase;
+                        using var blurred2 = new OpenCvSharp.Mat();
+                        OpenCvSharp.Cv2.GaussianBlur(image, blurred2, new OpenCvSharp.Size(k, k), 0);
+                        BlendPreview(image, blurred2, soft);
+                    }
+                }
+
+                OpenCvSharp.Cv2.ImEncode(".png", image, out byte[] buf);
+                return buf;
+            });
+
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.StreamSource = new System.IO.MemoryStream(blurredSource);
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.EndInit();
+            bmp.Freeze();
+            PreviewBlurredImage.Source = bmp;
+            PreviewStatusTextBlock.Text = "预览完成";
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("生成预览失败", ex);
+            PreviewStatusTextBlock.Text = "预览失败";
+            MessageBox.Show($"生成预览失败: {ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            PreviewRunButton.IsEnabled = true;
+        }
+    }
+
+    private static void BlendPreview(OpenCvSharp.Mat image, OpenCvSharp.Mat effect, OpenCvSharp.Mat soft)
+    {
+        using var soft3 = new OpenCvSharp.Mat();
+        OpenCvSharp.Cv2.Merge([soft, soft, soft], soft3);
+        using var imgF = new OpenCvSharp.Mat();
+        using var effF = new OpenCvSharp.Mat();
+        image.ConvertTo(imgF, OpenCvSharp.MatType.CV_32FC3);
+        effect.ConvertTo(effF, OpenCvSharp.MatType.CV_32FC3);
+        using var diff = new OpenCvSharp.Mat();
+        OpenCvSharp.Cv2.Subtract(effF, imgF, diff);
+        using var blended = new OpenCvSharp.Mat();
+        OpenCvSharp.Cv2.Multiply(diff, soft3, blended);
+        OpenCvSharp.Cv2.Add(imgF, blended, blended);
+        blended.ConvertTo(image, OpenCvSharp.MatType.CV_8UC3);
     }
 }

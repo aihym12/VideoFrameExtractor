@@ -20,6 +20,7 @@ public class FaceBlurService : IDisposable
     private const double FeatherSigma = 8.0;
 
     private BiSeNetFaceParser? _biSeNetParser;
+    private OnnxDevice _currentDevice = OnnxDevice.Cpu;
     private bool _disposed;
 
     // ── 静态辅助（供 MainWindow 查询缺失文件） ───────────────────────────────
@@ -52,8 +53,13 @@ public class FaceBlurService : IDisposable
         if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
             throw new DirectoryNotFoundException("目标图片目录不存在。");
 
-        // 初始化解析器（单例，重用 ONNX Session）
-        _biSeNetParser ??= new BiSeNetFaceParser();
+        // 初始化解析器（设备变更时重建 ONNX Session）
+        if (_biSeNetParser == null || _currentDevice != blurSettings.InferenceDevice)
+        {
+            _biSeNetParser?.Dispose();
+            _biSeNetParser = new BiSeNetFaceParser(blurSettings.InferenceDevice);
+            _currentDevice = blurSettings.InferenceDevice;
+        }
 
         return await Task.Run(() =>
         {

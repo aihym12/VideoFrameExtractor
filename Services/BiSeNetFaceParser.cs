@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using OpenCvSharp;
+using VideoFrameExtractor.Helpers;
 using VideoFrameExtractor.Models;
 
 namespace VideoFrameExtractor.Services;
@@ -108,7 +109,7 @@ public sealed class BiSeNetFaceParser : IDisposable
 
     // ── 构造 ─────────────────────────────────────────────────────────────────
 
-    public BiSeNetFaceParser()
+    public BiSeNetFaceParser(OnnxDevice device = OnnxDevice.Cpu)
     {
         if (!IsModelPresent())
             throw new FileNotFoundException(
@@ -117,8 +118,29 @@ public sealed class BiSeNetFaceParser : IDisposable
 
         var options = new SessionOptions();
         options.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
-        options.InterOpNumThreads = Math.Max(1, Environment.ProcessorCount / 2);
-        options.IntraOpNumThreads = Math.Max(1, Environment.ProcessorCount / 2);
+
+        if (device == OnnxDevice.DirectML)
+        {
+            try
+            {
+                options.AppendExecutionProvider_DML(0);
+                Logger.Info("BiSeNetFaceParser: 使用 DirectML（GPU）推理");
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn($"DirectML 初始化失败，自动回退到 CPU: {ex.Message}");
+                // 回退：使用默认 CPU 设置
+                options.InterOpNumThreads = Math.Max(1, Environment.ProcessorCount / 2);
+                options.IntraOpNumThreads = Math.Max(1, Environment.ProcessorCount / 2);
+            }
+        }
+        else
+        {
+            options.InterOpNumThreads = Math.Max(1, Environment.ProcessorCount / 2);
+            options.IntraOpNumThreads = Math.Max(1, Environment.ProcessorCount / 2);
+            Logger.Info("BiSeNetFaceParser: 使用 CPU 推理");
+        }
+
         _session = new InferenceSession(ModelFilePath, options);
     }
 

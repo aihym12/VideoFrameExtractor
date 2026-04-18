@@ -61,4 +61,9 @@ public class FaceBlurSettings
     /// 抽帧完成后自动执行人脸涂抹
     /// </summary>
     public bool AutoBlurAfterExtraction { get; set; }
+
+    /// <summary>
+    /// ONNX 推理使用的计算设备（CPU 或 DirectML 显卡）
+    /// </summary>
+    public OnnxDevice InferenceDevice { get; set; } = OnnxDevice.Cpu;
 }
