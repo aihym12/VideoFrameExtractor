@@ -28,11 +28,21 @@ public sealed class BiSeNetFaceParser : IDisposable
     // BiSeNet face-parser 下载源（同 face-parsing.PyTorch 格式，19 类，约 50MB）。
     // 按顺序尝试，任一成功即可。facefusion 在 models-3.1.0 起将原 face_parser.onnx
     // 更名为 bisenet_resnet_18.onnx；models-3.0.0 的旧链接已 404，因此优先使用新链接。
+    //
+    // 列表中同时提供了官方源和国内镜像（hf-mirror.com / mirror.ghproxy.com），
+    // 以便在中国大陆等无法直连 GitHub/HuggingFace 的网络环境下也能下载成功。
     public static readonly IReadOnlyList<string> ModelDownloadUrls = new[]
     {
+        // 官方源
         "https://github.com/facefusion/facefusion-assets/releases/download/models-3.1.0/bisenet_resnet_18.onnx",
         "https://github.com/yakhyo/face-parsing/releases/latest/download/resnet18.onnx",
         "https://huggingface.co/bluefoxcreation/Face_parsing_onnx/resolve/main/faceparser.onnx",
+        // 国内镜像（GitHub Release 反代 + HuggingFace 官方国内镜像）
+        // 注意：mirror.ghproxy.com 的 URL 格式要求把原始 https:// 链接整体拼在路径后面，
+        // 因此会出现看似重复的 "https://"，这是故意的，请勿"修正"。
+        "https://mirror.ghproxy.com/https://github.com/facefusion/facefusion-assets/releases/download/models-3.1.0/bisenet_resnet_18.onnx",
+        "https://mirror.ghproxy.com/https://github.com/yakhyo/face-parsing/releases/latest/download/resnet18.onnx",
+        "https://hf-mirror.com/bluefoxcreation/Face_parsing_onnx/resolve/main/faceparser.onnx",
     };
 
     /// <summary>主下载地址（保留以兼容旧调用方；实际下载会遍历 <see cref="ModelDownloadUrls"/>）。</summary>
@@ -55,10 +65,29 @@ public sealed class BiSeNetFaceParser : IDisposable
     private readonly InferenceSession _session;
     private bool _disposed;
 
-    // ── 静态 HttpClient（避免 socket 耗尽） ──────────────────────────────────
-    private static readonly HttpClient _httpClient = new() { Timeout = TimeSpan.FromMinutes(10) };
-
     // ── 静态辅助 ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 创建用于模型下载的 <see cref="HttpClient"/>。
+    /// 每次调用都新建实例，以便拾取用户在运行时通过"应用代理"按钮修改的
+    /// <see cref="HttpClient.DefaultProxy"/>（<see cref="SocketsHttpHandler"/> 会在首次
+    /// 请求时把 DefaultProxy 缓存到内部 Settings，因此共享的静态 HttpClient 无法感知后续修改）。
+    /// 模型下载频率极低（通常一次），不存在 socket 耗尽问题。
+    /// 调用方必须负责释放返回的 <see cref="HttpClient"/>（例如用 <c>using</c>），
+    /// 否则会泄漏底层的 <see cref="SocketsHttpHandler"/> 及其连接池。
+    /// </summary>
+    private static HttpClient CreateDownloadHttpClient()
+    {
+        var handler = new SocketsHttpHandler
+        {
+            UseProxy = true,
+            Proxy = HttpClient.DefaultProxy,
+        };
+        return new HttpClient(handler, disposeHandler: true)
+        {
+            Timeout = TimeSpan.FromMinutes(10),
+        };
+    }
 
     /// <summary>模型文件的完整路径</summary>
     public static string ModelFilePath =>
@@ -78,6 +107,8 @@ public sealed class BiSeNetFaceParser : IDisposable
         string tmpPath = ModelFilePath + ".tmp";
         List<string> failures = new();
 
+        using var httpClient = CreateDownloadHttpClient();
+
         for (int i = 0; i < ModelDownloadUrls.Count; i++)
         {
             string url = ModelDownloadUrls[i];
@@ -85,7 +116,7 @@ public sealed class BiSeNetFaceParser : IDisposable
             {
                 progress?.Report($"正在从镜像 {i + 1}/{ModelDownloadUrls.Count} 下载 BiSeNet 模型...");
 
-                using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 response.EnsureSuccessStatusCode();
                 long? totalBytes = response.Content.Headers.ContentLength;
 
